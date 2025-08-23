@@ -55,7 +55,7 @@ export function LoginForm() {
     <div className="min-h-screen flex items-center justify-center p-4">
       <Card className="w-full max-w-md bg-white shadow-lg">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl font-bold text-gray-900">Bulk Blog Generator</CardTitle>
+          <CardTitle className="text-2xl font-bold text-gray-900">Blu Blog Gen</CardTitle>
           <CardDescription className="text-gray-600">
             {isLogin ? "Sign in to your account" : "Create a new account"}
           </CardDescription>
