@@ -112,7 +112,7 @@ export function Dashboard({ user }: DashboardProps) {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center space-x-8">
-              <h1 className="text-2xl font-bold text-foreground">Bulk Blog Generator</h1>
+              <h1 className="text-2xl font-bold text-foreground">Blu Blog Gen</h1>
               <nav className="flex space-x-1">
                 <button
                   onClick={() => handleViewChange("dashboard")}
@@ -218,7 +218,7 @@ export function Dashboard({ user }: DashboardProps) {
                 <p className="text-lg text-muted-foreground">
                   {userData.projects.length === 0
                     ? "Create your first blog generation project"
-                    : "Manage your bulk blog generation projects"}
+                    : "Manage your Blu Blog Gen projects"}
                 </p>
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <span>Role: {permissions.role}</span>
@@ -288,7 +288,7 @@ export function Dashboard({ user }: DashboardProps) {
                 <p className="text-lg text-muted-foreground">
                   {userData.projects.length === 0
                     ? "Create your first blog generation project"
-                    : "View and manage all your blog generation projects"}
+                    : "View and manage all your Blu Blog Gen projects"}
                 </p>
               </div>
               {permissions.canCreateProjects && (

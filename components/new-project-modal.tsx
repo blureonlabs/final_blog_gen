@@ -115,7 +115,7 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
           <div className="flex items-center justify-between">
             <div>
               <CardTitle className="text-xl font-bold text-gray-900">New Project</CardTitle>
-              <CardDescription className="text-gray-600">Create a new bulk blog generation project</CardDescription>
+              <CardDescription className="text-gray-600">Create a new Blu Blog Gen project</CardDescription>
             </div>
             <Button onClick={onClose} variant="ghost" size="sm" className="text-gray-400 hover:text-gray-600">
               <X className="h-4 w-4" />

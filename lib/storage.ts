@@ -57,7 +57,7 @@ export interface UserData {
   }
 }
 
-const STORAGE_KEY = "bulk_blog_generator_data"
+const STORAGE_KEY = "blu_blog_gen_data"
 
 export const storage = {
   getData: (): UserData => {

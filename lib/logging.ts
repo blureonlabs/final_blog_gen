@@ -51,8 +51,8 @@ export interface ApiUsageEntry {
   status: "healthy" | "warning" | "error"
 }
 
-const LOGS_KEY = "bulk_blog_generator_logs"
-const ANALYTICS_KEY = "bulk_blog_generator_analytics"
+const LOGS_KEY = "blu_blog_gen_logs"
+const ANALYTICS_KEY = "blu_blog_gen_analytics"
 
 class Logger {
   private logs: LogEntry[] = []

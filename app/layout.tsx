@@ -11,8 +11,8 @@ const poppins = Poppins({
 })
 
 export const metadata: Metadata = {
-  title: "Blog Generator",
-  description: "Bulk blog generator dashboard",
+  title: "Blu Blog Gen",
+  description: "Blu Blog Gen dashboard",
   generator: "v0.app",
 }
 
