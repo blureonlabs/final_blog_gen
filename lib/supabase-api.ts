@@ -12,6 +12,26 @@ export interface Project {
   wordpress_account_id?: string
   api_keys?: any
   settings?: any
+  // AI Model Configuration
+  draft_creation_model?: "openai" | "gemini"
+  content_vetting_model?: "openai" | "gemini"
+  model_settings?: {
+    openai: {
+      temperature: number
+      max_tokens: number
+      model_version: "gpt-4" | "gpt-3.5-turbo"
+    }
+    gemini: {
+      temperature: number
+      max_output_tokens: number
+      model_version: "gemini-pro" | "gemini-pro-vision"
+    }
+  }
+  workflow_preferences?: {
+    auto_vet_after_draft: boolean
+    require_human_review: boolean
+    vetting_threshold: number
+  }
   created_at: string
   updated_at: string
 }
@@ -373,7 +393,12 @@ class SupabaseAPI {
         status: project.status,
         wordpress_account_id: project.wordpress_account_id,
         api_keys: project.api_keys,
-        settings: project.settings
+        settings: project.settings,
+        // AI Model Configuration
+        draft_creation_model: project.draft_creation_model,
+        content_vetting_model: project.content_vetting_model,
+        model_settings: project.model_settings,
+        workflow_preferences: project.workflow_preferences
       })
       .select()
       .single()
