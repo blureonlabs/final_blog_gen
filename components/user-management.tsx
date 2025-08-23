@@ -170,9 +170,9 @@ export function UserManagement() {
     }
 
     const externalLimits = {
-      blogs_limit: 10,
-      wordpress_accounts_limit: 1,
-      images_limit: 50
+      blogs_limit: 50,
+      wordpress_accounts_limit: 10,
+      images_limit: 100
     }
 
     await updateUserFeatures(userId, externalFeatures, externalLimits, 'free')

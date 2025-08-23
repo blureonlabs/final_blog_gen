@@ -440,9 +440,9 @@ class SupabaseAPI {
     }
 
     const limits = userProfile?.feature_limits || {
-      blogs_limit: 10,
-      wordpress_accounts_limit: 1,
-      images_limit: 50
+      blogs_limit: 50,
+      wordpress_accounts_limit: 10,
+      images_limit: 100
     }
 
     const pricingTier = userProfile?.pricing_tier || 'free'

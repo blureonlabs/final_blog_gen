@@ -22,7 +22,7 @@ CREATE TABLE users (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   features_enabled JSONB DEFAULT '{"blog_generation": true, "wordpress_accounts": false, "ai_image_generation": false, "advanced_features": false}'::jsonb,
-  feature_limits JSONB DEFAULT '{"blogs_limit": 10, "wordpress_accounts_limit": 1, "images_limit": 50}'::jsonb,
+  feature_limits JSONB DEFAULT '{"blogs_limit": 50, "wordpress_accounts_limit": 10, "images_limit": 100}'::jsonb,
   pricing_tier VARCHAR(50) DEFAULT 'free'
 );
 

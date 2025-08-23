@@ -215,9 +215,9 @@ function getDefaultData(): UserData {
     apiKeys: [],
     usage: {
       blogs_generated: 0,
-      blogs_limit: 10,
+      blogs_limit: 50,
       wordpress_accounts_used: 0,
-      wordpress_accounts_limit: 1,
+      wordpress_accounts_limit: 10,
     },
     subscription: {
       plan: "free",
