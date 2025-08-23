@@ -15,7 +15,7 @@ case "$1" in
     "harp"|"hariprasad"|"Harp0859")
         echo "Switching to Hariprasad Nivas (Harp0859)"
         git config user.name "Hariprasad Nivas"
-        git config user.email "hariprasad@example.com"
+        git config user.email "hariprasad.nm0@gmail.com"
         echo "✅ Switched to Hariprasad Nivas"
         ;;
     "team2"|"dev2")
