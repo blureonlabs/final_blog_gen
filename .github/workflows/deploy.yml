@@ -29,8 +29,20 @@ jobs:
       - name: Build with production environment
         run: npm run build
         env:
-          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.PROD_SUPABASE_URL }}
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.PROD_SUPABASE_ANON_KEY }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.PROD_SUPABASE_URL || 'https://placeholder.supabase.co' }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.PROD_SUPABASE_ANON_KEY || 'placeholder_key' }}
+
+      - name: Verify build output
+        run: |
+          echo "Build output contents:"
+          ls -la out/
+          echo "Checking for index.html:"
+          if [ -f "out/index.html" ]; then
+            echo "✅ index.html found"
+          else
+            echo "❌ index.html not found"
+            exit 1
+          fi
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
