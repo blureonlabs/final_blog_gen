@@ -1,0 +1,465 @@
+import { supabase } from "./supabase"
+import { authManager } from "./auth"
+import { supabaseLogger } from "./supabase-logging"
+
+export interface Project {
+  id: string
+  name: string
+  description: string
+  total_blogs: number
+  completed_blogs: number
+  status: "pending" | "in_progress" | "completed" | "failed"
+  wordpress_account_id?: string
+  api_keys?: any
+  settings?: any
+  created_at: string
+  updated_at: string
+}
+
+export interface WordPressAccount {
+  id: string
+  name: string
+  site_url: string
+  username: string
+  password: string
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface APIKey {
+  id: string
+  name: string
+  service: "openai" | "gemini" | "serp" | "other"
+  api_key: string
+  is_default: boolean
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface UserData {
+  projects: Project[]
+  wordpressAccounts: WordPressAccount[]
+  apiKeys: APIKey[]
+  usage: {
+    blogs_generated: number
+    blogs_limit: number
+    wordpress_accounts_used: number
+    wordpress_accounts_limit: number
+  }
+  subscription: {
+    plan: "free" | "starter" | "professional" | "enterprise" | "internal"
+    expires_at?: string
+  }
+  userFeatures?: {
+    features_enabled: {
+      blog_generation: boolean
+      wordpress_accounts: boolean
+      ai_image_generation: boolean
+      advanced_features: boolean
+    }
+    feature_limits: {
+      blogs_limit: number
+      wordpress_accounts_limit: number
+      images_limit: number
+    }
+    pricing_tier: string
+  }
+}
+
+class SupabaseAPI {
+  private getCurrentUserId(): string {
+    const user = authManager.getAuthState().user
+    if (!user) throw new Error("User not authenticated")
+    return user.id
+  }
+
+  // WordPress Accounts
+  async addWordPressAccount(account: Omit<WordPressAccount, "id" | "created_at" | "updated_at" | "is_active">): Promise<WordPressAccount> {
+    const userId = this.getCurrentUserId()
+    
+    try {
+      const { data, error } = await supabase
+        .from('wordpress_accounts')
+        .insert({
+          user_id: userId,
+          name: account.name,
+          site_url: account.site_url,
+          username: account.username,
+          password: account.password,
+          is_active: true
+        })
+        .select()
+        .single()
+
+      if (error) throw error
+
+      // Log successful WordPress account addition
+      await supabaseLogger.success("user", "WordPress account added successfully", {
+        details: {
+          account_name: account.name,
+          site_url: account.site_url,
+          account_id: data.id
+        }
+      })
+
+      return data
+    } catch (error) {
+      // Log failed WordPress account addition
+      await supabaseLogger.error("user", "Failed to add WordPress account", {
+        details: {
+          account_name: account.name,
+          site_url: account.site_url,
+          error: error instanceof Error ? error.message : String(error)
+        }
+      })
+      throw error
+    }
+  }
+
+  async updateWordPressAccount(id: string, updates: Partial<WordPressAccount>): Promise<void> {
+    const userId = this.getCurrentUserId()
+    
+    try {
+      // Get current account details for logging
+      const { data: currentAccount } = await supabase
+        .from('wordpress_accounts')
+        .select('name, site_url')
+        .eq('id', id)
+        .eq('user_id', userId)
+        .single()
+
+      const { error } = await supabase
+        .from('wordpress_accounts')
+        .update(updates)
+        .eq('id', id)
+        .eq('user_id', userId)
+
+      if (error) throw error
+
+      // Log successful WordPress account update
+      await supabaseLogger.info("user", "WordPress account updated successfully", {
+        details: {
+          account_id: id,
+          account_name: currentAccount?.name || 'Unknown',
+          site_url: currentAccount?.site_url || 'Unknown',
+          updated_fields: Object.keys(updates),
+          updates: updates
+        }
+      })
+    } catch (error) {
+      // Log failed WordPress account update
+      await supabaseLogger.error("user", "Failed to update WordPress account", {
+        details: {
+          account_id: id,
+          error: error instanceof Error ? error.message : String(error)
+        }
+      })
+      throw error
+    }
+  }
+
+  async deleteWordPressAccount(id: string): Promise<void> {
+    const userId = this.getCurrentUserId()
+    
+    try {
+      // Get account details for logging before deletion
+      const { data: accountToDelete } = await supabase
+        .from('wordpress_accounts')
+        .select('name, site_url')
+        .eq('id', id)
+        .eq('user_id', userId)
+        .single()
+
+      const { error } = await supabase
+        .from('wordpress_accounts')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', userId)
+
+      if (error) throw error
+
+      // Log successful WordPress account deletion
+      await supabaseLogger.warning("user", "WordPress account deleted", {
+        details: {
+          account_id: id,
+          account_name: accountToDelete?.name || 'Unknown',
+          site_url: accountToDelete?.site_url || 'Unknown'
+        }
+      })
+    } catch (error) {
+      // Log failed WordPress account deletion
+      await supabaseLogger.error("user", "Failed to delete WordPress account", {
+        details: {
+          account_id: id,
+          error: error instanceof Error ? error.message : String(error)
+        }
+      })
+      throw error
+    }
+  }
+
+  async getWordPressAccounts(): Promise<WordPressAccount[]> {
+    const userId = this.getCurrentUserId()
+    
+    const { data, error } = await supabase
+      .from('wordpress_accounts')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('is_active', true)
+      .order('created_at', { ascending: false })
+
+    if (error) throw error
+    return data || []
+  }
+
+  // API Keys
+  async addAPIKey(key: Omit<APIKey, "id" | "created_at" | "updated_at" | "is_active">): Promise<APIKey> {
+    const userId = this.getCurrentUserId()
+    
+    try {
+      // If this is the first key for this service, make it default
+      const existingKeys = await this.getAPIKeys()
+      const isDefault = existingKeys.filter(k => k.service === key.service).length === 0
+      
+      const { data, error } = await supabase
+        .from('api_keys')
+        .insert({
+          user_id: userId,
+          name: key.name,
+          service: key.service,
+          api_key: key.api_key,
+          is_default: isDefault,
+          is_active: true
+        })
+        .select()
+        .single()
+
+      if (error) throw error
+
+      // Log successful API key addition
+      await supabaseLogger.success("user", "API key added successfully", {
+        details: {
+          key_name: key.name,
+          service: key.service,
+          is_default: isDefault,
+          key_id: data.id
+        }
+      })
+
+      return data
+    } catch (error) {
+      // Log failed API key addition
+      await supabaseLogger.error("user", "Failed to add API key", {
+        details: {
+          key_name: key.name,
+          service: key.service,
+          error: error instanceof Error ? error.message : String(error)
+        }
+      })
+      throw error
+    }
+  }
+
+  async updateAPIKey(id: string, updates: Partial<APIKey>): Promise<void> {
+    const userId = this.getCurrentUserId()
+    
+    try {
+      // Get current key details for logging
+      const { data: currentKey } = await supabase
+        .from('api_keys')
+        .select('name, service')
+        .eq('id', id)
+        .eq('user_id', userId)
+        .single()
+
+      const { error } = await supabase
+        .from('api_keys')
+        .update(updates)
+        .eq('id', id)
+        .eq('user_id', userId)
+
+      if (error) throw error
+
+      // Log successful API key update
+      await supabaseLogger.info("user", "API key updated successfully", {
+        details: {
+          key_id: id,
+          key_name: currentKey?.name || 'Unknown',
+          service: currentKey?.service || 'Unknown',
+          updated_fields: Object.keys(updates),
+          updates: updates
+        }
+      })
+    } catch (error) {
+      // Log failed API key update
+      await supabaseLogger.error("user", "Failed to update API key", {
+        details: {
+          key_id: id,
+          error: error instanceof Error ? error.message : String(error)
+        }
+      })
+      throw error
+    }
+  }
+
+  async deleteAPIKey(id: string): Promise<void> {
+    const userId = this.getCurrentUserId()
+    
+    try {
+      // Get key details for logging before deletion
+      const { data: keyToDelete } = await supabase
+        .from('api_keys')
+        .select('name, service')
+        .eq('id', id)
+        .eq('user_id', userId)
+        .single()
+
+      const { error } = await supabase
+        .from('api_keys')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', userId)
+
+      if (error) throw error
+
+      // Log successful API key deletion
+      await supabaseLogger.warning("user", "API key deleted", {
+        details: {
+          key_id: id,
+          key_name: keyToDelete?.name || 'Unknown',
+          service: keyToDelete?.service || 'Unknown'
+        }
+      })
+    } catch (error) {
+      // Log failed API key deletion
+      await supabaseLogger.error("user", "Failed to delete API key", {
+        details: {
+          key_id: id,
+          error: error instanceof Error ? error.message : String(error)
+        }
+      })
+      throw error
+    }
+  }
+
+  async getAPIKeys(): Promise<APIKey[]> {
+    const userId = this.getCurrentUserId()
+    
+    const { data, error } = await supabase
+      .from('api_keys')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('is_active', true)
+      .order('created_at', { ascending: false })
+
+    if (error) throw error
+    return data || []
+  }
+
+  // Projects
+  async addProject(project: Omit<Project, "id" | "created_at" | "updated_at">): Promise<Project> {
+    const userId = this.getCurrentUserId()
+    
+    const { data, error } = await supabase
+      .from('projects')
+      .insert({
+        user_id: userId,
+        name: project.name,
+        description: project.description,
+        total_blogs: project.total_blogs,
+        completed_blogs: project.completed_blogs,
+        status: project.status,
+        wordpress_account_id: project.wordpress_account_id,
+        api_keys: project.api_keys,
+        settings: project.settings
+      })
+      .select()
+      .single()
+
+    if (error) throw error
+    return data
+  }
+
+  async getProjects(): Promise<Project[]> {
+    const userId = this.getCurrentUserId()
+    
+    const { data, error } = await supabase
+      .from('projects')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+
+    if (error) throw error
+    return data || []
+  }
+
+  // Get all user data
+  async getUserData(): Promise<UserData> {
+    const userId = this.getCurrentUserId()
+    
+    const [projects, wordpressAccounts, apiKeys, userProfile] = await Promise.all([
+      this.getProjects(),
+      this.getWordPressAccounts(),
+      this.getAPIKeys(),
+      this.getUserProfile()
+    ])
+
+    // Get user features and limits from database
+    const features = userProfile?.features_enabled || {
+      blog_generation: true,
+      wordpress_accounts: false,
+      ai_image_generation: false,
+      advanced_features: false
+    }
+
+    const limits = userProfile?.feature_limits || {
+      blogs_limit: 10,
+      wordpress_accounts_limit: 1,
+      images_limit: 50
+    }
+
+    const pricingTier = userProfile?.pricing_tier || 'free'
+
+    return {
+      projects,
+      wordpressAccounts,
+      apiKeys,
+      usage: {
+        blogs_generated: 0,
+        blogs_limit: limits.blogs_limit,
+        wordpress_accounts_used: wordpressAccounts.length,
+        wordpress_accounts_limit: limits.wordpress_accounts_limit
+      },
+      subscription: {
+        plan: pricingTier === 'internal' ? 'internal' : 'free'
+      },
+      userFeatures: {
+        features_enabled: features,
+        feature_limits: limits,
+        pricing_tier: pricingTier
+      }
+    }
+  }
+
+  // Get user profile with features
+  private async getUserProfile() {
+    const userId = this.getCurrentUserId()
+    
+    const { data, error } = await supabase
+      .from('users')
+      .select('features_enabled, feature_limits, pricing_tier')
+      .eq('id', userId)
+      .single()
+
+    if (error) {
+      console.error("Error loading user profile:", error)
+      return null
+    }
+
+    return data
+  }
+}
+
+export const supabaseApi = new SupabaseAPI()
