@@ -35,6 +35,32 @@ class AuthManager {
 
   private async initializeAuth() {
     try {
+      // Check if Supabase is configured
+      if (!supabase || !process.env.NEXT_PUBLIC_SUPABASE_URL) {
+        console.warn('Supabase not configured, using mock authentication')
+        // Create a mock user for development
+        this.authState = {
+          user: {
+            id: 'mock-user-id',
+            email: 'demo@example.com',
+            full_name: 'Demo User',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            subscription: {
+              plan: "free"
+            },
+            role: "user",
+            is_active: true,
+            api_usage_limit: 100,
+            api_usage_current: 0
+          },
+          isAuthenticated: true,
+          isLoading: false,
+        }
+        this.notifyListeners()
+        return
+      }
+      
       // Get initial session
       const { data: { session } } = await supabase.auth.getSession()
       
@@ -67,6 +93,12 @@ class AuthManager {
 
   private async loadUserProfile(userId: string) {
     try {
+      // Check if Supabase is configured
+      if (!supabase || !process.env.NEXT_PUBLIC_SUPABASE_URL) {
+        console.warn('Supabase not configured, cannot load user profile')
+        return
+      }
+      
       console.log('Loading user profile for ID:', userId)
       
       // Force refresh by not using cache

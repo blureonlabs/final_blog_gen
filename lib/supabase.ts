@@ -1,17 +1,32 @@
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co'
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder_anon_key_here'
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  console.error('Missing Supabase environment variables. Please check your .env.local file.')
-  throw new Error('Missing Supabase environment variables')
+// Check if we have real Supabase credentials
+const hasRealCredentials = process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+if (!hasRealCredentials) {
+  console.warn('⚠️  Supabase environment variables not configured. Using placeholder client. Some features may not work.')
 }
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
 export const isSupabaseConfigured = () => {
-  return !!(supabaseUrl && supabaseAnonKey)
+  return hasRealCredentials
+}
+
+// Mock data for development when Supabase is not configured
+export const getMockUserData = () => {
+  if (hasRealCredentials) return null
+  
+  return {
+    id: 'mock-user-id',
+    email: 'demo@example.com',
+    full_name: 'Demo User',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  }
 }
 
 // Database types for TypeScript

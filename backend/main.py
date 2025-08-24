@@ -6,7 +6,7 @@ import uvicorn
 from dotenv import load_dotenv
 import os
 
-from routers import projects, wordpress_accounts, api_keys
+from routers import projects, wordpress_accounts, api_keys, blogs
 from core.config import settings
 from core.supabase_client import supabase_client
 
@@ -60,6 +60,7 @@ app.add_middleware(
 app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
 app.include_router(wordpress_accounts.router, prefix="/api/wordpress-accounts", tags=["wordpress-accounts"])
 app.include_router(api_keys.router, prefix="/api/api-keys", tags=["api-keys"])
+app.include_router(blogs.router, prefix="/api/blogs", tags=["blogs"])
 
 @app.get("/")
 async def root():

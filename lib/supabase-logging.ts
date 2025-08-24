@@ -36,9 +36,17 @@ class SupabaseLogger {
     },
   ): Promise<void> {
     try {
+      // Check if Supabase is configured
+      if (!supabase || !process.env.NEXT_PUBLIC_SUPABASE_URL) {
+        console.warn('Supabase not configured, using console logging only')
+        this.logToConsole(level, category, message, options)
+        return
+      }
+
       const currentUser = authManager.getAuthState().user
       if (!currentUser) {
         console.warn("Cannot log: User not authenticated")
+        this.logToConsole(level, category, message, options)
         return
       }
 
@@ -91,6 +99,12 @@ class SupabaseLogger {
 
   async getLogs(filters: LogFilters = {}): Promise<LogEntry[]> {
     try {
+      // Check if Supabase is configured
+      if (!supabase || !process.env.NEXT_PUBLIC_SUPABASE_URL) {
+        console.warn('Supabase not configured, returning empty logs')
+        return []
+      }
+
       const currentUser = authManager.getAuthState().user
       if (!currentUser) {
         console.warn("Cannot fetch logs: User not authenticated")

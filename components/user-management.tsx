@@ -10,6 +10,7 @@ import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { supabase } from "@/lib/supabase"
 import { User, Search, Filter, RefreshCw, Shield, Crown, UserCheck, UserX, Zap, Globe, ImageIcon, Settings, Star } from "lucide-react"
+import { toast } from "sonner"
 
 interface UserData {
   id: string
@@ -36,6 +37,19 @@ interface UserData {
   pricing_tier?: string
 }
 
+interface FeatureLimits {
+  blogs_limit: number
+  wordpress_accounts_limit: number
+  images_limit: number
+}
+
+interface FeaturesEnabled {
+  blog_generation: boolean
+  wordpress_accounts: boolean
+  ai_image_generation: boolean
+  advanced_features: boolean
+}
+
 export function UserManagement() {
   const [users, setUsers] = useState<UserData[]>([])
   const [loading, setLoading] = useState(true)
@@ -59,18 +73,20 @@ export function UserManagement() {
 
       if (error) {
         console.error("Error loading users:", error)
+        toast.error("Failed to load users")
         return
       }
 
       setUsers(data || [])
     } catch (error) {
       console.error("Error loading users:", error)
+      toast.error("Failed to load users")
     } finally {
       setLoading(false)
     }
   }
 
-  const updateUserRole = async (userId: string, newRole: string) => {
+  const updateUserRole = async (userId: string, newRole: "user" | "admin" | "moderator") => {
     try {
       const { error } = await supabase
         .from('users')
@@ -79,15 +95,18 @@ export function UserManagement() {
 
       if (error) {
         console.error("Error updating user role:", error)
+        toast.error("Failed to update user role")
         return
       }
 
       // Update local state
       setUsers(users.map(user => 
-        user.id === userId ? { ...user, role: newRole as any } : user
+        user.id === userId ? { ...user, role: newRole } : user
       ))
+      toast.success("User role updated successfully")
     } catch (error) {
       console.error("Error updating user role:", error)
+      toast.error("Failed to update user role")
     }
   }
 
@@ -100,6 +119,7 @@ export function UserManagement() {
 
       if (error) {
         console.error("Error updating user status:", error)
+        toast.error("Failed to update user status")
         return
       }
 
@@ -107,12 +127,14 @@ export function UserManagement() {
       setUsers(users.map(user => 
         user.id === userId ? { ...user, is_active: !currentStatus } : user
       ))
+      toast.success(`User ${!currentStatus ? 'activated' : 'deactivated'} successfully`)
     } catch (error) {
       console.error("Error updating user status:", error)
+      toast.error("Failed to update user status")
     }
   }
 
-  const updateUserFeatures = async (userId: string, features: any, limits: any, tier: string) => {
+  const updateUserFeatures = async (userId: string, features: FeaturesEnabled, limits: FeatureLimits, tier: string) => {
     try {
       const { error } = await supabase
         .from('users')
@@ -125,6 +147,7 @@ export function UserManagement() {
 
       if (error) {
         console.error("Error updating user features:", error)
+        toast.error("Failed to update user features")
         return
       }
 
@@ -139,20 +162,22 @@ export function UserManagement() {
       ))
 
       setEditingUser(null)
+      toast.success("User features updated successfully")
     } catch (error) {
       console.error("Error updating user features:", error)
+      toast.error("Failed to update user features")
     }
   }
 
   const makeUserInternal = async (userId: string) => {
-    const internalFeatures = {
+    const internalFeatures: FeaturesEnabled = {
       blog_generation: true,
       wordpress_accounts: true,
       ai_image_generation: true,
       advanced_features: true
     }
 
-    const internalLimits = {
+    const internalLimits: FeatureLimits = {
       blogs_limit: 999999,
       wordpress_accounts_limit: 999,
       images_limit: 9999
@@ -162,14 +187,14 @@ export function UserManagement() {
   }
 
   const makeUserExternal = async (userId: string) => {
-    const externalFeatures = {
+    const externalFeatures: FeaturesEnabled = {
       blog_generation: true,
       wordpress_accounts: false,
       ai_image_generation: false,
       advanced_features: false
     }
 
-    const externalLimits = {
+    const externalLimits: FeatureLimits = {
       blogs_limit: 50,
       wordpress_accounts_limit: 10,
       images_limit: 100
@@ -233,6 +258,47 @@ export function UserManagement() {
 
     return matchesSearch && matchesRole && matchesStatus && matchesTier
   })
+
+  const handleFeatureToggle = (userId: string, feature: keyof FeaturesEnabled, checked: boolean) => {
+    setUsers(users.map(u => {
+      if (u.id === userId) {
+        const currentFeatures = u.features_enabled || {
+          blog_generation: false,
+          wordpress_accounts: false,
+          ai_image_generation: false,
+          advanced_features: false
+        }
+        return {
+          ...u,
+          features_enabled: {
+            ...currentFeatures,
+            [feature]: checked
+          }
+        }
+      }
+      return u
+    }))
+  }
+
+  const handleLimitChange = (userId: string, limit: keyof FeatureLimits, value: string) => {
+    setUsers(users.map(u => {
+      if (u.id === userId) {
+        const currentLimits = u.feature_limits || {
+          blogs_limit: 0,
+          wordpress_accounts_limit: 0,
+          images_limit: 0
+        }
+        return {
+          ...u,
+          feature_limits: {
+            ...currentLimits,
+            [limit]: parseInt(value) || 0
+          }
+        }
+      }
+      return u
+    }))
+  }
 
   if (loading) {
     return (
@@ -383,7 +449,7 @@ export function UserManagement() {
                       {/* Role Update */}
                       <Select
                         value={user.role}
-                        onValueChange={(newRole) => updateUserRole(user.id, newRole)}
+                        onValueChange={(newRole) => updateUserRole(user.id, newRole as "user" | "admin" | "moderator")}
                       >
                         <SelectTrigger className="w-32">
                           <SelectValue />
@@ -453,15 +519,7 @@ export function UserManagement() {
                               </Label>
                               <Switch
                                 checked={user.features_enabled?.blog_generation || false}
-                                onCheckedChange={(checked) => {
-                                  const newFeatures = {
-                                    ...user.features_enabled,
-                                    blog_generation: checked
-                                  }
-                                  setUsers(users.map(u => 
-                                    u.id === user.id ? { ...u, features_enabled: newFeatures } : u
-                                  ))
-                                }}
+                                onCheckedChange={(checked) => handleFeatureToggle(user.id, 'blog_generation', checked)}
                               />
                             </div>
                             <div className="flex items-center justify-between">
@@ -471,15 +529,7 @@ export function UserManagement() {
                               </Label>
                               <Switch
                                 checked={user.features_enabled?.wordpress_accounts || false}
-                                onCheckedChange={(checked) => {
-                                  const newFeatures = {
-                                    ...user.features_enabled,
-                                    wordpress_accounts: checked
-                                  }
-                                  setUsers(users.map(u => 
-                                    u.id === user.id ? { ...u, features_enabled: newFeatures } : u
-                                  ))
-                                }}
+                                onCheckedChange={(checked) => handleFeatureToggle(user.id, 'wordpress_accounts', checked)}
                               />
                             </div>
                             <div className="flex items-center justify-between">
@@ -489,15 +539,7 @@ export function UserManagement() {
                               </Label>
                               <Switch
                                 checked={user.features_enabled?.ai_image_generation || false}
-                                onCheckedChange={(checked) => {
-                                  const newFeatures = {
-                                    ...user.features_enabled,
-                                    ai_image_generation: checked
-                                  }
-                                  setUsers(users.map(u => 
-                                    u.id === user.id ? { ...u, features_enabled: newFeatures } : u
-                                  ))
-                                }}
+                                onCheckedChange={(checked) => handleFeatureToggle(user.id, 'ai_image_generation', checked)}
                               />
                             </div>
                             <div className="flex items-center justify-between">
@@ -507,15 +549,7 @@ export function UserManagement() {
                               </Label>
                               <Switch
                                 checked={user.features_enabled?.advanced_features || false}
-                                onCheckedChange={(checked) => {
-                                  const newFeatures = {
-                                    ...user.features_enabled,
-                                    advanced_features: checked
-                                  }
-                                  setUsers(users.map(u => 
-                                    u.id === user.id ? { ...u, features_enabled: newFeatures } : u
-                                  ))
-                                }}
+                                onCheckedChange={(checked) => handleFeatureToggle(user.id, 'advanced_features', checked)}
                               />
                             </div>
                           </div>
@@ -530,16 +564,9 @@ export function UserManagement() {
                               <Input
                                 type="number"
                                 value={user.feature_limits?.blogs_limit || 0}
-                                onChange={(e) => {
-                                  const newLimits = {
-                                    ...user.feature_limits,
-                                    blogs_limit: parseInt(e.target.value) || 0
-                                  }
-                                  setUsers(users.map(u => 
-                                    u.id === user.id ? { ...u, feature_limits: newLimits } : u
-                                  ))
-                                }}
+                                onChange={(e) => handleLimitChange(user.id, 'blogs_limit', e.target.value)}
                                 className="h-8 text-xs"
+                                min="0"
                               />
                             </div>
                             <div>
@@ -547,16 +574,9 @@ export function UserManagement() {
                               <Input
                                 type="number"
                                 value={user.feature_limits?.wordpress_accounts_limit || 0}
-                                onChange={(e) => {
-                                  const newLimits = {
-                                    ...user.feature_limits,
-                                    wordpress_accounts_limit: parseInt(e.target.value) || 0
-                                  }
-                                  setUsers(users.map(u => 
-                                    u.id === user.id ? { ...u, feature_limits: newLimits } : u
-                                  ))
-                                }}
+                                onChange={(e) => handleLimitChange(user.id, 'wordpress_accounts_limit', e.target.value)}
                                 className="h-8 text-xs"
+                                min="0"
                               />
                             </div>
                             <div>
@@ -564,16 +584,9 @@ export function UserManagement() {
                               <Input
                                 type="number"
                                 value={user.feature_limits?.images_limit || 0}
-                                onChange={(e) => {
-                                  const newLimits = {
-                                    ...user.feature_limits,
-                                    images_limit: parseInt(e.target.value) || 0
-                                  }
-                                  setUsers(users.map(u => 
-                                    u.id === user.id ? { ...u, feature_limits: newLimits } : u
-                                  ))
-                                }}
+                                onChange={(e) => handleLimitChange(user.id, 'images_limit', e.target.value)}
                                 className="h-8 text-xs"
+                                min="0"
                               />
                             </div>
                           </div>
@@ -584,12 +597,25 @@ export function UserManagement() {
                       <div className="flex gap-2 mt-4 pt-3 border-t">
                         <Button
                           size="sm"
-                          onClick={() => updateUserFeatures(
-                            user.id,
-                            user.features_enabled,
-                            user.feature_limits,
-                            user.pricing_tier || 'free'
-                          )}
+                          onClick={() => {
+                            const currentFeatures = user.features_enabled || {
+                              blog_generation: false,
+                              wordpress_accounts: false,
+                              ai_image_generation: false,
+                              advanced_features: false
+                            }
+                            const currentLimits = user.feature_limits || {
+                              blogs_limit: 0,
+                              wordpress_accounts_limit: 0,
+                              images_limit: 0
+                            }
+                            updateUserFeatures(
+                              user.id,
+                              currentFeatures,
+                              currentLimits,
+                              user.pricing_tier || 'free'
+                            )
+                          }}
                         >
                           Save Changes
                         </Button>
