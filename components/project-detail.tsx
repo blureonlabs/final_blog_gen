@@ -26,6 +26,7 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
   useEffect(() => {
     console.log("🔄 ProjectDetail useEffect triggered with initialProject:", initialProject)
     console.log("🔍 initialProject num_blogs:", initialProject?.num_blogs)
+    console.log("🔍 initialProject status:", initialProject?.status)
     if (initialProject) {
       loadProjectData(initialProject)
     }
@@ -35,6 +36,7 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
     console.log("🚀 loadProjectData called with project:", foundProject)
     console.log("🔍 Initial project num_blogs:", foundProject?.num_blogs)
     console.log("🔍 Initial project ID:", foundProject?.id)
+    console.log("🔍 Initial project status:", foundProject?.status)
 
     if (foundProject) {
       // First, try to get updated project status from backend
@@ -460,50 +462,94 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
     console.log("🔍 Project num_blogs:", project?.num_blogs)
     console.log("🔍 Project ID being sent:", project?.id)
     console.log("🔍 Project ID type:", typeof project?.id)
+    console.log("🔍 Project status:", project?.status)
     
-    if (!project) return
+    if (!project) {
+      console.error("❌ No project object available")
+      alert("No project data available. Please refresh the page and try again.")
+      return
+    }
+    
+    if (!project.id) {
+      console.error("❌ Project ID is missing")
+      alert("Project ID is missing. Please refresh the page and try again.")
+      return
+    }
+    
+    // Validate that project ID is a valid UUID format
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    if (!uuidRegex.test(project.id)) {
+      console.error("❌ Invalid project ID format:", project.id)
+      alert("Invalid project ID format. Please refresh the page and try again.")
+      return
+    }
     
     try {
-      // Call the direct blog generation API
-      const requestBody = {
-        project_id: project.id,
-        prompt: `Generate content about ${project.name}: ${project.description}`,
-        num_blogs: project.num_blogs,
-        ai_model: "openai", // Default to OpenAI, can be made configurable
-        ai_model_version: "gpt-4",
-        batch_size: 5
+      // First, verify the project exists in the database
+      console.log("🔍 Verifying project exists in database...")
+      console.log("🔍 Project ID being sent:", project.id)
+      console.log("🔍 Backend URL:", `http://localhost:8000/api/projects/${project.id}`)
+      
+      let projectData = null
+      
+      try {
+        // Call the backend API directly since Next.js API routes don't exist
+        const verifyResponse = await fetch(`http://localhost:8000/api/projects/${project.id}`)
+        console.log("🔍 Verification response status:", verifyResponse.status)
+        console.log("🔍 Verification response headers:", verifyResponse.headers)
+        
+        if (!verifyResponse.ok) {
+          const errorText = await verifyResponse.text()
+          console.error("❌ Project verification failed:", errorText)
+          throw new Error(`Project verification failed: ${verifyResponse.statusText} - ${errorText}`)
+        }
+        
+        projectData = await verifyResponse.json()
+        console.log("✅ Project verified in database:", projectData)
+      } catch (verifyError) {
+        console.warn("⚠️ Project verification failed, proceeding with local project data:", verifyError)
+        console.log("🔍 Using local project data for content generation")
+        projectData = project
       }
       
-      console.log("📤 Request body:", requestBody)
-      console.log("📤 Project ID in request:", requestBody.project_id)
+      // Now start content generation
+      const requestBody = {
+        project_id: project.id,  // This should now be a valid UUID string
+        prompt: project.description || `Generate ${project.num_blogs} blog posts for the project: ${project.name}`,
+        ai_model: project.draft_creation_model || "openai",
+        ai_model_version: project.model_settings?.version,
+        num_blogs: project.num_blogs,
+        batch_size: Math.min(5, project.num_blogs)  // Default to 5 or less if fewer blogs requested
+      }
       
-      const response = await fetch('http://localhost:8000/api/content-generation/generate-direct', {
+      console.log("🚀 Starting content generation with request:", requestBody)
+      
+      const contentResponse = await fetch('http://localhost:8000/api/content-generation/generate-direct', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify(requestBody),
       })
       
-      if (response.ok) {
-        const result = await response.json()
-        console.log("✅ Blog generation started:", result)
-        
-        // Refresh project data to show new blogs
-        setTimeout(async () => {
-          await loadProjectData(project)
-          onUpdate()
-        }, 3000)
-        
-        setShowContentGenerationModal(false)
-      } else {
-        const error = await response.text()
-        console.error("❌ Blog generation failed:", error)
-        alert(`Blog generation failed: ${error}`)
+      if (!contentResponse.ok) {
+        const errorData = await contentResponse.json()
+        throw new Error(`Blog generation failed: ${JSON.stringify(errorData)}`)
       }
+      
+      const result = await contentResponse.json()
+      console.log("✅ Content generation started successfully:", result)
+      
+      // Update project status to show it's in progress
+      setProject(prev => prev ? { ...prev, status: 'in_progress' } : null)
+      
+      // Show success message
+      alert("Content generation started successfully! Check the logs for progress.")
+      
     } catch (error) {
-      console.error("❌ Error starting blog generation:", error)
-      alert("Failed to start blog generation. Please check your API keys and try again.")
+      console.error("❌ Error starting content generation:", error)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
+      alert(`Failed to start content generation: ${errorMessage}`)
     }
   }
 
@@ -596,7 +642,10 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
         <div className="flex items-center space-x-3">
           {/* Refresh Button */}
           <Button
-            onClick={loadProjectData}
+            onClick={(e) => {
+              e.preventDefault()
+              loadProjectData(project)
+            }}
             variant="outline"
             size="sm"
             className="border-gray-300 text-gray-600 hover:bg-gray-50"
@@ -618,9 +667,15 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
                 project.status === "pending" ? "Start Content Generation" : "Resume Content Generation"}
              </Button>
            )}
+           
+           {/* Debug info for button visibility */}
+           {(() => {
+             console.log("🔍 Button visibility check - project status:", project.status, "should show:", (project.status === "pending" || project.status === "in_progress" || project.status === "ready"))
+             return null
+           })()}
 
           {/* Show status when generating */}
-          {project.status === "running" && (
+          {project.status === "in_progress" && (
             <Button
               disabled
               className="bg-blue-600 text-white cursor-not-allowed"
@@ -677,7 +732,7 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
                              <div>
                  <h4 className="text-sm font-medium text-gray-700 mb-2">WordPress Account</h4>
                  <p className="text-sm text-gray-900 font-medium">
-                   {project.wordpress_account || "Not configured yet"}
+                   {project.wordpress_account_id || "Not configured yet"}
                  </p>
                </div>
                              <div>
@@ -751,7 +806,7 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
       </Card>
 
       {/* Content Monitoring Section */}
-      {project.status === "running" && (
+              {project.status === "in_progress" && (
         <Card className="bg-blue-50 border-blue-200 mb-6">
           <CardHeader>
             <CardTitle className="text-lg text-blue-900 flex items-center">
@@ -816,7 +871,7 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
                 <div className="text-sm text-blue-800">
                           <p><strong>Current Progress:</strong> {blogs.length} of {project.num_blogs} blogs</p>
         <p><strong>Estimated Time:</strong> {Math.ceil((project.num_blogs - blogs.length) / 5)} minutes remaining</p>
-                  <p><strong>Status:</strong> {project.status === "running" ? "🔄 Active" : "⏸️ Paused"}</p>
+                  <p><strong>Status:</strong> {project.status === "in_progress" ? "🔄 Active" : "⏸️ Paused"}</p>
                 </div>
               </div>
             </div>

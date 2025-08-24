@@ -131,24 +131,34 @@ export function ContentGenerationModal({
     setIsGenerating(true);
     
     try {
+      // Prepare the request payload
+      const requestPayload = {
+        project_id: projectId,
+        prompt: prompt.trim(),
+        num_blogs: numBlogs,
+        ai_model: aiModel,
+        ai_model_version: aiModelVersion,
+        batch_size: batchSize,
+      };
+
+      console.log('Sending request payload:', requestPayload);
+
       // Use the direct generation endpoint for immediate results
       const response = await fetch('http://localhost:8000/api/content-generation/generate-direct', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          project_id: projectId,
-          prompt: prompt.trim(),
-          num_blogs: numBlogs,
-          ai_model: aiModel,
-          ai_model_version: aiModelVersion,
-          batch_size: numBlogs, // Use numBlogs as batch size for direct generation
-        }),
+        body: JSON.stringify(requestPayload),
       });
+
+      console.log('Response status:', response.status);
+      console.log('Response headers:', response.headers);
 
       if (response.ok) {
         const data = await response.json();
+        console.log('Success response:', data);
+        
         toast({
           title: "Success",
           description: `Successfully generated ${data.blogs_requested} blogs!`,
@@ -162,8 +172,21 @@ export function ContentGenerationModal({
         }, 2000);
         
       } else {
-        const error = await response.json();
-        throw new Error(error.detail || 'Failed to generate blogs');
+        const errorData = await response.json();
+        console.error('Error response:', errorData);
+        
+        let errorMessage = 'Failed to generate blogs';
+        if (errorData.detail) {
+          if (Array.isArray(errorData.detail)) {
+            errorMessage = errorData.detail.map((err: any) => 
+              `${err.loc?.join('.')}: ${err.msg}`
+            ).join(', ');
+          } else {
+            errorMessage = errorData.detail;
+          }
+        }
+        
+        throw new Error(errorMessage);
       }
     } catch (error) {
       console.error('Error generating blogs:', error);

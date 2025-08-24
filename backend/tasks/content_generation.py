@@ -33,9 +33,9 @@ async def generate_blogs_task(
     try:
         logger.info(f"Starting blog generation for project {project_id}: {num_blogs} blogs using {ai_model}")
         
-        # Update project status to generating
+        # Update project status to in_progress
         await supabase.table("projects").update({
-            "status": "generating",
+            "status": "in_progress",
             "updated_at": "now()"
         }).eq("id", project_id).execute()
         
@@ -259,7 +259,7 @@ async def _update_project_progress(
     try:
         # Update project with current progress
         await supabase.table("projects").update({
-            "status": "generating",
+            "status": "in_progress",
             "updated_at": "now()"
         }).eq("id", project_id).execute()
         

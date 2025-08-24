@@ -216,6 +216,8 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
       // Determine final vetting model
       const finalVettingModel = contentVettingModel === "same" ? draftCreationModel : contentVettingModel
 
+      console.log("🚀 Creating project with status: ready")
+      
       const newProject = await supabaseApi.addProject({
         name: name.trim(),
         description: description.trim(),
@@ -226,7 +228,7 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
         api_keys: {
           openai: selectedOpenAI?.id || (isDemoMode ? "demo-openai-key" : ""),
           gemini: selectedGeminiAPI?.id || (isDemoMode ? "demo-gemini-key" : ""),
-          serp: selectedSerpAPI?.id || (isDemoMode ? "demo-serp-key" : ""),
+          serp: selectedSerpAPI?.id || (isDemoMode ? "demo-serb-key" : ""),
         },
         // AI Model Configuration
         draft_creation_model: draftCreationModel,
@@ -250,6 +252,11 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
         }
       })
 
+      console.log("✅ Project created successfully:", newProject)
+      console.log("🔍 Project ID after creation:", newProject.id)
+      console.log("🔍 Project status after creation:", newProject.status)
+      console.log("🔍 Project object type:", typeof newProject)
+      
       onSuccess(newProject)
       
       // Show demo mode message if Supabase is not configured
@@ -261,7 +268,36 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
       
       onClose()
     } catch (error: any) {
-      setError(error.message || "Failed to create project")
+      console.error("❌ Project creation failed:", error)
+      
+      // Provide more helpful error messages
+      if (error.message && error.message.includes("projects_status_check")) {
+        setError("Database constraint error: 'ready' status not allowed. Please run the database migration script in Supabase.")
+      } else if (error.message && error.message.includes("Supabase not configured")) {
+        setError("Supabase not configured. Project created in demo mode only.")
+        // Create a mock project for demo mode
+        const mockProject = {
+          id: `mock-project-${Date.now()}`,
+          name: name.trim(),
+          description: description.trim(),
+          num_blogs: numBlogs,
+          completed_blogs: 0,
+          status: "ready",
+          wordpress_account_id: "demo-wp-account",
+          api_keys: {
+            openai: "demo-openai-key",
+            gemini: "demo-gemini-key",
+            serp: "demo-serb-key",
+          },
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }
+        onSuccess(mockProject)
+        onClose()
+        return
+      } else {
+        setError(error.message || "Failed to create project. Please try again.")
+      }
     } finally {
       setLoading(false)
     }

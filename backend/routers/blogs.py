@@ -54,7 +54,7 @@ async def generate_blogs(
         }
         
         # Check if project is already running
-        if project["status"] in ["running", "generating"]:
+        if project["status"] in ["running", "in_progress"]:
             raise HTTPException(status_code=400, detail="Project is already running")
         
         # Create some test blogs immediately for testing
@@ -110,7 +110,7 @@ async def generate_blogs(
         # Update project status in Supabase if possible
         try:
             supabase_client.table("projects").update({
-                "status": "running",
+                "status": "in_progress",
                 "updated_at": datetime.utcnow().isoformat()
             }).eq("id", str(request.project_id)).execute()
         except Exception as e:

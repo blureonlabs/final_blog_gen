@@ -537,41 +537,48 @@ class SupabaseAPI {
           wordpress_account_id: project.wordpress_account_id,
           api_keys: project.api_keys,
           settings: project.settings,
-          // AI Model Configuration
           draft_creation_model: project.draft_creation_model,
           content_vetting_model: project.content_vetting_model,
           model_settings: project.model_settings,
           workflow_preferences: project.workflow_preferences,
+          user_id: userId,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         }
       }
-    
-    const { data, error } = await supabase
-      .from('projects')
-      .insert({
-        user_id: userId,
-        name: project.name,
-        description: project.description,
-        num_blogs: project.num_blogs,
-        completed_blogs: project.completed_blogs,
-        status: project.status,
-        wordpress_account_id: project.wordpress_account_id,
-        api_keys: project.api_keys,
-        settings: project.settings,
-        // AI Model Configuration
-        draft_creation_model: project.draft_creation_model,
-        content_vetting_model: project.content_vetting_model,
-        model_settings: project.model_settings,
-        workflow_preferences: project.workflow_preferences
-      })
-      .select()
-      .single()
 
-    if (error) throw error
-    return data
+      // Ensure project ID is a valid UUID string
+      const projectData = {
+        ...project,
+        user_id: userId,
+        status: project.status || 'pending'
+      }
+
+      console.log('🔍 Adding project to Supabase:', projectData)
+      
+      const { data, error } = await supabase
+        .table('projects')
+        .insert(projectData)
+        .select()
+        .single()
+
+      if (error) {
+        console.error('❌ Error adding project:', error)
+        
+        // Check if it's a constraint violation
+        if ('code' in error && error.code === '23514') {
+          throw new Error(`Database constraint violation: ${error.message}. Please check your project data.`)
+        } else if ('code' in error && error.code === '23505') {
+          throw new Error(`Duplicate project: ${error.message}`)
+        } else {
+          throw new Error(`Failed to create project: ${error.message}`)
+        }
+      }
+
+      console.log('✅ Project added successfully:', data)
+      return data
     } catch (error) {
-      console.error("Error in addProject:", error)
+      console.error('❌ Error in addProject:', error)
       throw error
     }
   }

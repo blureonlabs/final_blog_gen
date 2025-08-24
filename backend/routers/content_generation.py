@@ -66,7 +66,7 @@ async def generate_blogs(
         
         # Update project status
         supabase.table("projects").update({
-            "status": "generating",
+            "status": "in_progress",
             "updated_at": "now()"
         }).eq("id", str(request.project_id)).execute()
         
@@ -116,18 +116,30 @@ async def generate_blogs_direct(
         project_description = project.get("description", "Blog content generation")
         project_api_keys = project.get("api_keys", {})
         
+        # Add detailed logging for debugging
+        logger.info(f"🔍 Project data: {project}")
+        logger.info(f"🔍 Project API keys: {project_api_keys}")
+        logger.info(f"🔍 Project description: {project_description}")
+        logger.info(f"🔍 AI model requested: {request.ai_model}")
+        logger.info(f"🔍 Number of blogs requested: {request.num_blogs}")
+        
         # Check if project has required API keys
         if not project_api_keys.get("openai") and not project_api_keys.get("gemini"):
+            logger.error(f"❌ No API keys found in project: {project_api_keys}")
             raise HTTPException(
                 status_code=400, 
                 detail="Project must have OpenAI or Gemini API keys configured"
             )
         
-        # Update project status to generating
+        logger.info(f"✅ API keys found: OpenAI={bool(project_api_keys.get('openai'))}, Gemini={bool(project_api_keys.get('gemini'))}")
+        
+        # Update project status to in_progress
         supabase.table("projects").update({
-            "status": "generating",
+            "status": "in_progress",
             "updated_at": "now()"
         }).eq("id", str(request.project_id)).execute()
+        
+        logger.info(f"🚀 Starting blog generation with service...")
         
         # Generate blogs using the service with project details and API keys
         generated_blogs = await blog_generation_service.generate_blogs_for_project(
@@ -137,6 +149,8 @@ async def generate_blogs_direct(
             ai_model=request.ai_model,
             project_api_keys=project_api_keys
         )
+        
+        logger.info(f"✅ Blog generation completed: {len(generated_blogs)} blogs generated")
         
         # Update project status and completed blogs count
         supabase.table("projects").update({
@@ -171,7 +185,11 @@ async def generate_blogs_direct(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in direct blog generation: {e}")
+        logger.error(f"❌ Error in direct blog generation: {e}")
+        logger.error(f"❌ Error type: {type(e)}")
+        logger.error(f"❌ Error details: {str(e)}")
+        import traceback
+        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Blog generation failed: {str(e)}")
 
 @router.get("/blogs/{project_id}", response_model=BlogListResponse)

@@ -1,24 +1,24 @@
 export interface Project {
-  id: string
+  id: string  // UUID string format
+  user_id: string  // UUID string format
   name: string
   description: string
   num_blogs: number
   completed_blogs: number
   status: "pending" | "in_progress" | "completed" | "failed" | "ready"
-  wordpress_account_id: string
+  wordpress_account_id: string | null  // UUID string format
   api_keys: {
-    openai: string
-    gemini: string
     serp: string
-  }
+    gemini: string
+    openai: string
+  } | null
+  settings: any
+  draft_creation_model: string
+  content_vetting_model: string
+  model_settings: any
+  workflow_preferences: any
   created_at: string
   updated_at: string
-  blogs?: Blog[]
-  // AI Model Configuration
-  draft_creation_model?: string
-  content_vetting_model?: string
-  model_settings?: any
-  workflow_preferences?: any
 }
 
 export interface Blog {

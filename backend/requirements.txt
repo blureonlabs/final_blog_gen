@@ -14,5 +14,4 @@ psycopg2-binary==2.9.9
 sqlalchemy==2.0.23
 alembic==1.13.1
 openai>=1.0.0
-google-generativeai>=0.3.0
 requests>=2.31.0
