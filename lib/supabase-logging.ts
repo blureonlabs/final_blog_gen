@@ -36,9 +36,16 @@ class SupabaseLogger {
     },
   ): Promise<void> {
     try {
-      // Check if Supabase is configured
+      // Check if Supabase is configured - if not, just use console logging
       if (!supabase || !process.env.NEXT_PUBLIC_SUPABASE_URL) {
         console.warn('Supabase not configured, using console logging only')
+        this.logToConsole(level, category, message, options)
+        return
+      }
+
+      // Additional check to ensure we have a valid Supabase connection
+      if (!supabase.auth || !supabase.from) {
+        console.warn('Supabase client not properly initialized, using console logging only')
         this.logToConsole(level, category, message, options)
         return
       }
@@ -50,38 +57,45 @@ class SupabaseLogger {
         return
       }
 
-      const logEntry = {
-        user_id: currentUser.id,
-        action: message, // Use 'action' instead of 'message' to match DB schema
-        level,
-        category,
-        timestamp: new Date().toISOString(),
-        details: options?.details || null, // Only include details if they exist
+      // Only attempt Supabase operations if we have all the required pieces
+      try {
+        const logEntry = {
+          user_id: currentUser.id,
+          action: message, // Use 'action' instead of 'message' to match DB schema
+          level,
+          category,
+          timestamp: new Date().toISOString(),
+          details: options?.details || null, // Only include details if they exist
+        }
+
+        // Insert log into Supabase
+        console.log("Attempting to insert log:", logEntry) // Debug log
+        const { error } = await supabase
+          .from('activity_logs')
+          .insert(logEntry)
+
+        if (error) {
+          console.warn("Failed to save log to Supabase:", error)
+          // Fallback to console logging
+          this.logToConsole(level, category, message, options)
+          return
+        }
+
+        console.log("Log successfully saved to Supabase") // Debug log
+
+        // Clean up old logs to maintain performance
+        await this.cleanupOldLogs(currentUser.id)
+
+      } catch (supabaseError) {
+        console.warn("Supabase operation failed, falling back to console logging:", supabaseError)
+        // Don't throw, just fall back to console logging
       }
 
-      // Insert log into Supabase
-      console.log("Attempting to insert log:", logEntry) // Debug log
-      const { error } = await supabase
-        .from('activity_logs')
-        .insert(logEntry)
-
-      if (error) {
-        console.error("Failed to save log to Supabase:", error)
-        // Fallback to console logging
-        this.logToConsole(level, category, message, options)
-        return
-      }
-
-      console.log("Log successfully saved to Supabase") // Debug log
-
-      // Clean up old logs to maintain performance
-      await this.cleanupOldLogs(currentUser.id)
-
-      // Also log to console for development
+      // Always log to console for development
       this.logToConsole(level, category, message, options)
 
     } catch (error) {
-      console.error("Error in Supabase logging:", error)
+      console.warn("Error in Supabase logging, using console fallback:", error)
       // Fallback to console logging
       this.logToConsole(level, category, message, options)
     }
@@ -105,65 +119,77 @@ class SupabaseLogger {
         return []
       }
 
+      // Additional check to ensure we have a valid Supabase connection
+      if (!supabase.auth || !supabase.from) {
+        console.warn('Supabase client not properly initialized, returning empty logs')
+        return []
+      }
+
       const currentUser = authManager.getAuthState().user
       if (!currentUser) {
         console.warn("Cannot fetch logs: User not authenticated")
         return []
       }
 
-      let query = supabase
-        .from('activity_logs')
-        .select('*')
-        .eq('user_id', currentUser.id)
-        .order('timestamp', { ascending: false })
+      try {
+        let query = supabase
+          .from('activity_logs')
+          .select('*')
+          .eq('user_id', currentUser.id)
+          .order('timestamp', { ascending: false })
 
-      // Apply filters
-      if (filters.level) {
-        query = query.eq('level', filters.level)
-      }
+        // Apply filters
+        if (filters.level) {
+          query = query.eq('level', filters.level)
+        }
 
-      if (filters.category) {
-        query = query.eq('category', filters.category)
-      }
+        if (filters.category) {
+          query = query.eq('category', filters.category)
+        }
 
-      if (filters.project_id) {
-        query = query.eq('project_name', filters.project_id)
-      }
+        if (filters.project_id) {
+          query = query.eq('project_name', filters.project_id)
+        }
 
-      if (filters.start_date) {
-        query = query.gte('timestamp', filters.start_date)
-      }
+        if (filters.start_date) {
+          query = query.gte('timestamp', filters.start_date)
+        }
 
-      if (filters.end_date) {
-        query = query.lte('timestamp', filters.end_date)
-      }
+        if (filters.end_date) {
+          query = query.lte('timestamp', filters.end_date)
+        }
 
-      if (filters.limit) {
-        query = query.limit(filters.limit)
-      }
+        if (filters.limit) {
+          query = query.limit(filters.limit)
+        }
 
-      const { data, error } = await query
+        const { data, error } = await query
 
-      if (error) {
-        console.error("Failed to fetch logs from Supabase:", error)
+        if (error) {
+          console.warn("Failed to fetch logs from Supabase:", error)
+          return []
+        }
+
+        // Apply search filter if provided
+        let filteredLogs = data || []
+        if (filters.search) {
+          const searchTerm = filters.search.toLowerCase()
+          filteredLogs = filteredLogs.filter(
+            (log) =>
+              log.action.toLowerCase().includes(searchTerm) || // Use 'action' instead of 'message'
+              (log.details && JSON.stringify(log.details).toLowerCase().includes(searchTerm)),
+          )
+        }
+
+        return filteredLogs
+
+      } catch (supabaseError) {
+        console.warn("Supabase query failed, returning empty logs:", supabaseError)
         return []
       }
 
-      // Apply search filter if provided
-      let filteredLogs = data || []
-      if (filters.search) {
-        const searchTerm = filters.search.toLowerCase()
-        filteredLogs = filteredLogs.filter(
-          (log) =>
-            log.action.toLowerCase().includes(searchTerm) || // Use 'action' instead of 'message'
-            (log.details && JSON.stringify(log.details).toLowerCase().includes(searchTerm)),
-        )
-      }
-
-      return filteredLogs
-
     } catch (error) {
-      console.error("Error fetching logs:", error)
+      console.warn("Error fetching logs:", error)
       return []
     }
   }
@@ -190,26 +216,44 @@ class SupabaseLogger {
 
   async clearLogs(): Promise<boolean> {
     try {
+      // Check if Supabase is configured
+      if (!supabase || !process.env.NEXT_PUBLIC_SUPABASE_URL) {
+        console.warn('Supabase not configured, cannot clear logs')
+        return false
+      }
+
+      // Additional check to ensure we have a valid Supabase connection
+      if (!supabase.auth || !supabase.from) {
+        console.warn('Supabase client not properly initialized, cannot clear logs')
+        return false
+      }
+
       const currentUser = authManager.getAuthState().user
       if (!currentUser) {
         console.warn("Cannot clear logs: User not authenticated")
         return false
       }
 
-      const { error } = await supabase
-        .from('activity_logs')
-        .delete()
-        .eq('user_id', currentUser.id)
+      try {
+        const { error } = await supabase
+          .from('activity_logs')
+          .delete()
+          .eq('user_id', currentUser.id)
 
-      if (error) {
-        console.error("Failed to clear logs from Supabase:", error)
+        if (error) {
+          console.warn("Failed to clear logs from Supabase:", error)
+          return false
+        }
+
+        return true
+
+      } catch (supabaseError) {
+        console.warn("Supabase operation failed:", supabaseError)
         return false
       }
 
-      return true
-
     } catch (error) {
-      console.error("Error clearing logs:", error)
+      console.warn("Error clearing logs:", error)
       return false
     }
   }
@@ -226,28 +270,44 @@ class SupabaseLogger {
 
   private async cleanupOldLogs(userId: string): Promise<void> {
     try {
-      // Get total count of logs for this user
-      const { count, error } = await supabase
-        .from('activity_logs')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', userId)
-
-      if (error || !count || count <= this.maxLogs) {
+      // Check if Supabase is configured
+      if (!supabase || !process.env.NEXT_PUBLIC_SUPABASE_URL) {
         return
       }
 
-      // Delete old logs beyond the limit
-      const logsToDelete = count - this.maxLogs
+      // Additional check to ensure we have a valid Supabase connection
+      if (!supabase.auth || !supabase.from) {
+        return
+      }
 
-      const { error: deleteError } = await supabase
-        .from('activity_logs')
-        .delete()
-        .eq('user_id', userId)
-        .lt('timestamp', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()) // Delete logs older than 24 hours
-        .limit(logsToDelete)
+      try {
+        // Get total count of logs for this user
+        const { count, error } = await supabase
+          .from('activity_logs')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', userId)
 
-      if (deleteError) {
-        console.warn("Failed to cleanup old logs:", deleteError)
+        if (error || !count || count <= this.maxLogs) {
+          return
+        }
+
+        // Delete old logs beyond the limit
+        const logsToDelete = count - this.maxLogs
+
+        const { error: deleteError } = await supabase
+          .from('activity_logs')
+          .delete()
+          .eq('user_id', userId)
+          .lt('timestamp', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()) // Delete logs older than 24 hours
+          .limit(logsToDelete)
+
+        if (deleteError) {
+          console.warn("Failed to cleanup old logs:", deleteError)
+        }
+
+      } catch (supabaseError) {
+        console.warn("Supabase cleanup operation failed:", supabaseError)
+        // Don't throw, just log the warning
       }
 
     } catch (error) {

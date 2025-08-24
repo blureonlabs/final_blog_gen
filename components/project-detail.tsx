@@ -7,6 +7,7 @@ import { Progress } from "@/components/ui/progress"
 import { BlogPreviewModal } from "@/components/blog-preview-modal"
 import { ArrowLeft, FileText, Eye, ExternalLink, Clock, CheckCircle, XCircle, Upload } from "lucide-react"
 import { storage, type Project, type Blog } from "@/lib/storage"
+import { ContentGenerationModal } from "@/components/content-generation-modal"
 
 interface ProjectDetailProps {
   projectId: string
@@ -19,18 +20,88 @@ export function ProjectDetail({ projectId, onBack, onUpdate }: ProjectDetailProp
   const [blogs, setBlogs] = useState<Blog[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedBlog, setSelectedBlog] = useState<Blog | null>(null)
+  const [showContentGenerationModal, setShowContentGenerationModal] = useState(false)
 
   useEffect(() => {
     loadProjectData()
   }, [projectId])
 
-  const loadProjectData = () => {
+  const loadProjectData = async () => {
     const userData = storage.getData()
     const foundProject = userData.projects.find((p) => p.id === projectId)
 
     if (foundProject) {
-      setProject(foundProject)
+      // First, try to get updated project status from backend
+      try {
+        console.log("🔄 Fetching updated project status from backend...")
+        const projectResponse = await fetch(`http://localhost:8000/api/projects/${projectId}`)
+        if (projectResponse.ok) {
+          const backendProject = await projectResponse.json()
+          console.log("📊 Backend project data:", backendProject)
+          
+          // Update project with backend data
+          const updatedProject = {
+            ...foundProject,
+            status: backendProject.status || foundProject.status,
+            updated_at: backendProject.updated_at || foundProject.updated_at
+          }
+          console.log("🔄 Updated project with backend data:", updatedProject)
+          setProject(updatedProject)
+        } else {
+          console.log("⚠️ Could not fetch project status from backend, using local data")
+          setProject(foundProject)
+        }
+      } catch (error) {
+        console.log("❌ Backend project API not available, using local data:", error)
+        setProject(foundProject)
+      }
 
+      // Try to fetch real blogs from backend API
+      try {
+        console.log("🔄 Fetching blogs from backend API for project:", projectId)
+        const response = await fetch(`http://localhost:8000/api/blogs/project/${projectId}`)
+        console.log("📡 Backend response status:", response.status)
+        
+        if (response.ok) {
+          const apiData = await response.json()
+          console.log("📊 Backend API response:", apiData)
+          console.log("📝 Raw blogs from backend:", apiData.blogs)
+          
+          if (apiData.blogs && apiData.blogs.length > 0) {
+            // Map backend blog statuses to frontend statuses
+            const mappedBlogs = apiData.blogs.map((blog: any) => {
+              const mappedStatus = mapBackendStatusToFrontend(blog.status)
+              console.log(`🔄 Mapping blog "${blog.title}": ${blog.status} → ${mappedStatus}`)
+              return {
+                id: blog.id,
+                title: blog.title,
+                status: mappedStatus,
+                word_count: blog.word_count || 0,
+                created_at: blog.created_at,
+                published_at: blog.status === "ready" ? blog.created_at : undefined,
+                content: blog.content,
+                prompt: blog.prompt,
+                ai_model: blog.ai_model
+              }
+            })
+            
+            console.log("✅ Final mapped blogs for frontend:", mappedBlogs)
+            setBlogs(mappedBlogs)
+            setLoading(false)
+            return
+          } else {
+            console.log("⚠️ No blogs found in backend response")
+          }
+        } else {
+          console.log("❌ Backend API error:", response.status, response.statusText)
+          const errorText = await response.text()
+          console.log("❌ Error details:", errorText)
+        }
+      } catch (error) {
+        console.log("❌ Backend API not available, using mock data:", error)
+      }
+
+      // Fallback to mock data if backend is not available
       const generatedBlogs: Blog[] = []
       const statusDistribution = [
         { status: "published", count: Math.floor(foundProject.completed_blogs * 0.7) },
@@ -58,6 +129,25 @@ export function ProjectDetail({ projectId, onBack, onUpdate }: ProjectDetailProp
     }
 
     setLoading(false)
+  }
+
+  // Helper function to map backend statuses to frontend statuses
+  const mapBackendStatusToFrontend = (backendStatus: string): Blog["status"] => {
+    switch (backendStatus) {
+      case "ready":
+        return "published"
+      case "generating":
+        return "generating"
+      case "draft":
+        return "draft"
+      case "failed":
+        return "failed"
+      case "pending":
+        return "draft"
+      default:
+        console.log(`⚠️ Unknown backend status: ${backendStatus}, mapping to draft`)
+        return "draft"
+    }
   }
 
   const generateBlogTitle = (projectName: string): string => {
@@ -190,6 +280,44 @@ export function ProjectDetail({ projectId, onBack, onUpdate }: ProjectDetailProp
     }, 1000)
   }
 
+  const handleStartContentGeneration = () => {
+    console.log("[v0] Opening content generation modal...")
+    setShowContentGenerationModal(true)
+  }
+
+  const handleStartGeneration = () => {
+    console.log("[v0] Starting content generation...")
+    // In a real application, you would trigger the actual generation process here
+    // This would involve calling an API endpoint to start the generation pipeline
+    // For now, we'll just simulate it
+    const newBlogs: Blog[] = []
+    const statusDistribution = [
+      { status: "published", count: Math.floor(project!.total_blogs * 0.7) },
+      { status: "draft", count: Math.floor(project!.total_blogs * 0.2) },
+      { status: "generating", count: Math.floor(project!.total_blogs * 0.05) },
+      { status: "failed", count: Math.floor(project!.total_blogs * 0.05) },
+    ]
+
+    let blogIndex = 1
+    statusDistribution.forEach(({ status, count }) => {
+      for (let i = 0; i < count; i++) {
+        newBlogs.push({
+          id: `blog-${blogIndex}`,
+          title: `Blog Post ${blogIndex}: ${generateBlogTitle(project!.name)}`,
+          status: status as Blog["status"],
+          word_count: Math.floor(Math.random() * 1000) + 500,
+          created_at: new Date().toISOString(),
+          published_at: status === "published" ? new Date().toISOString() : undefined,
+        })
+        blogIndex++
+      }
+    })
+
+    setBlogs(newBlogs)
+    setShowContentGenerationModal(false)
+    onUpdate()
+  }
+
   if (loading) {
     return (
       <div className="animate-pulse">
@@ -244,6 +372,42 @@ export function ProjectDetail({ projectId, onBack, onUpdate }: ProjectDetailProp
         </div>
 
         <div className="flex items-center space-x-3">
+          {/* Refresh Button */}
+          <Button
+            onClick={loadProjectData}
+            variant="outline"
+            size="sm"
+            className="border-gray-300 text-gray-600 hover:bg-gray-50"
+            title="Refresh content"
+          >
+            <Clock className="h-4 w-4 mr-2" />
+            Refresh
+          </Button>
+
+          {/* Start Content Generation Button */}
+          {(project.status === "pending" || project.status === "in_progress") && (
+            <Button
+              onClick={handleStartContentGeneration}
+              className="bg-green-600 hover:bg-green-700 text-white"
+              size="sm"
+            >
+              <FileText className="h-4 w-4 mr-2" />
+              {project.status === "pending" ? "Start Content Generation" : "Resume Content Generation"}
+            </Button>
+          )}
+
+          {/* Show status when generating */}
+          {project.status === "running" && (
+            <Button
+              disabled
+              className="bg-blue-600 text-white cursor-not-allowed"
+              size="sm"
+            >
+              <Clock className="h-4 w-4 mr-2 animate-spin" />
+              Generating Content...
+            </Button>
+          )}
+
           {failedBlogs > 0 && (
             <Button
               onClick={handleRegenerateFailed}
@@ -355,6 +519,80 @@ export function ProjectDetail({ projectId, onBack, onUpdate }: ProjectDetailProp
         </CardContent>
       </Card>
 
+      {/* Content Monitoring Section */}
+      {project.status === "running" && (
+        <Card className="bg-blue-50 border-blue-200 mb-6">
+          <CardHeader>
+            <CardTitle className="text-lg text-blue-900 flex items-center">
+              <Clock className="h-5 w-5 mr-2" />
+              Content Generation in Progress
+            </CardTitle>
+            <CardDescription className="text-blue-700">
+              Your blogs are being generated. Here's how to monitor progress:
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {/* Real-time Progress */}
+              <div className="bg-white p-4 rounded-lg border border-blue-200">
+                <h4 className="font-medium text-blue-900 mb-3">📊 Generation Progress</h4>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                  <div className="text-center">
+                    <div className="text-lg font-bold text-blue-600">{generatingBlogs}</div>
+                    <div className="text-blue-700">Currently Generating</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-lg font-bold text-green-600">{publishedBlogs}</div>
+                    <div className="text-green-700">Completed</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-lg font-bold text-yellow-600">{draftBlogs}</div>
+                    <div className="text-yellow-700">Ready for Review</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-lg font-bold text-gray-600">{project.total_blogs - blogs.length}</div>
+                    <div className="text-gray-700">Remaining</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Where to Check Content */}
+              <div className="bg-white p-4 rounded-lg border border-blue-200">
+                <h4 className="font-medium text-blue-900 mb-3">📍 Where to Check Generated Content</h4>
+                <div className="space-y-2 text-sm text-blue-800">
+                  <div className="flex items-center space-x-2">
+                    <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
+                    <span><strong>This Page:</strong> Blogs appear here as they're generated</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
+                    <span><strong>Backend API:</strong> GET /api/blogs/project/{project.id}</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
+                    <span><strong>Database:</strong> Check 'blogs' table in Supabase</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
+                    <span><strong>Console Logs:</strong> Backend terminal shows real-time progress</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Estimated Completion */}
+              <div className="bg-white p-4 rounded-lg border border-blue-200">
+                <h4 className="font-medium text-blue-900 mb-3">⏱️ Estimated Completion</h4>
+                <div className="text-sm text-blue-800">
+                  <p><strong>Current Progress:</strong> {blogs.length} of {project.total_blogs} blogs</p>
+                  <p><strong>Estimated Time:</strong> {Math.ceil((project.total_blogs - blogs.length) / 5)} minutes remaining</p>
+                  <p><strong>Status:</strong> {project.status === "running" ? "🔄 Active" : "⏸️ Paused"}</p>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Blogs List */}
       <Card className="bg-white shadow-sm">
         <CardHeader>
@@ -433,6 +671,24 @@ export function ProjectDetail({ projectId, onBack, onUpdate }: ProjectDetailProp
 
       {/* Blog Preview Modal */}
       {selectedBlog && <BlogPreviewModal blog={selectedBlog} onClose={() => setSelectedBlog(null)} />}
+
+      {/* Content Generation Modal */}
+      {showContentGenerationModal && project && (
+        <ContentGenerationModal
+          project={project}
+          onClose={() => setShowContentGenerationModal(false)}
+          onStartGeneration={async () => {
+            console.log("🔄 Content generation started, will refresh data...")
+            setShowContentGenerationModal(false)
+            // Wait a bit for the backend to process
+            setTimeout(async () => {
+              console.log("🔄 Refreshing project data after content generation...")
+              await loadProjectData()
+              onUpdate()
+            }, 2000)
+          }}
+        />
+      )}
     </div>
   )
 }

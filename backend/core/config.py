@@ -46,7 +46,7 @@ settings = Settings()
 
 # Validate required settings
 if not settings.SUPABASE_URL or not settings.SUPABASE_ANON_KEY:
-    print("⚠️  Warning: SUPABASE_URL and SUPABASE_ANON_KEY are not set. Some features may not work.")
-    # Set default placeholder values to allow the server to start
-    settings.SUPABASE_URL = "https://placeholder.supabase.co"
-    settings.SUPABASE_ANON_KEY = "placeholder_key_here"
+    print("⚠️  Warning: SUPABASE_URL and SUPABASE_ANON_KEY are not set. Using provided credentials.")
+    # Use the user's actual Supabase credentials
+    settings.SUPABASE_URL = "https://kjijwycmwjxqurdlnalo.supabase.co"
+    settings.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtqaWp3eWNtd2p4cXVyZGxuYWxvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU5NzM3MzEsImV4cCI6MjA3MTU0OTczMX0.mf8SqZZLbirhlmu13AZ0ftJrV71L91bTxkWAWyGqA0g"

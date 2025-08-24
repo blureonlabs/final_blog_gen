@@ -20,9 +20,10 @@ interface ProjectListProps {
   projects: Project[]
   loading: boolean
   onProjectSelect: (projectId: string) => void
+  onResume: (project: Project) => void
 }
 
-export function ProjectList({ projects, loading, onProjectSelect }: ProjectListProps) {
+export function ProjectList({ projects, loading, onProjectSelect, onResume }: ProjectListProps) {
   const getStatusIcon = (status: string) => {
     switch (status) {
       case "completed":
@@ -107,7 +108,21 @@ export function ProjectList({ projects, loading, onProjectSelect }: ProjectListP
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle className="text-lg font-medium text-gray-900 truncate">{project.name}</CardTitle>
-                {getStatusIcon(project.status)}
+                <div className="flex items-center space-x-2">
+                  {project.status === "in_progress" && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onResume(project)
+                      }}
+                      className="p-2 bg-blue-100 hover:bg-blue-200 rounded-full transition-colors"
+                      title="Resume Content Generation"
+                    >
+                      <PlayCircle className="h-4 w-4 text-blue-600" />
+                    </button>
+                  )}
+                  {getStatusIcon(project.status)}
+                </div>
               </div>
               <CardDescription className="text-gray-600 line-clamp-2">{project.description}</CardDescription>
             </CardHeader>

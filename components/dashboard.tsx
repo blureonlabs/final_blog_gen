@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { ProjectList } from "@/components/project-list"
 import { NewProjectModal } from "@/components/new-project-modal"
+import { ContentGenerationModal } from "@/components/content-generation-modal"
 import { ProjectDetail } from "@/components/project-detail"
 import { Settings } from "@/components/settings"
 import { Logs } from "@/components/logs"
@@ -11,7 +12,6 @@ import { AdminPanel } from "@/components/admin-panel"
 
 import { Plus, LogOut, User as UserIcon, Settings as SettingsIcon, Shield, RefreshCw } from "lucide-react"
 
-import { Pricing } from "@/components/pricing"
 import { supabaseApi, type UserData as SupabaseUserData, type Project } from "@/lib/supabase-api"
 import { authManager, type User } from "@/lib/auth"
 import { ProfileSettings } from "@/components/profile-settings"
@@ -24,10 +24,11 @@ interface DashboardProps {
 }
 
 export function Dashboard({ user }: DashboardProps) {
-  const [activeView, setActiveView] = useState<"dashboard" | "projects" | "project" | "settings" | "logs" | "admin">("dashboard")
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
+  const [activeView, setActiveView] = useState<"dashboard" | "admin" | "settings">("dashboard")
   const [showNewProject, setShowNewProject] = useState(false)
-  const [showPricing, setShowPricing] = useState(false)
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
+  const [showContentGenerationModal, setShowContentGenerationModal] = useState(false)
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null)
   const [showProfileSettings, setShowProfileSettings] = useState(false) // Added state
   const [userData, setUserData] = useState<SupabaseUserData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -61,7 +62,11 @@ export function Dashboard({ user }: DashboardProps) {
   const handleProjectSelect = (projectId: string) => {
     setSelectedProjectId(projectId)
     setActiveView("project")
-    // No need to log every project view
+  }
+
+  const handleResume = (project: Project) => {
+    setSelectedProject(project)
+    setShowContentGenerationModal(true)
   }
 
   const handleProjectCreated = async (newProject: Project) => {
@@ -257,14 +262,14 @@ export function Dashboard({ user }: DashboardProps) {
                 {activeProjects.length > 0 && (
                   <div className="mb-12">
                     <h3 className="text-xl font-semibold text-foreground mb-6">Active Projects</h3>
-                    <ProjectList projects={activeProjects} loading={false} onProjectSelect={handleProjectSelect} />
+                    <ProjectList projects={activeProjects} loading={false} onProjectSelect={handleProjectSelect} onResume={handleResume} />
                   </div>
                 )}
 
                 {completedProjects.length > 0 && (
                   <div>
                     <h3 className="text-xl font-semibold text-foreground mb-6">Completed Projects</h3>
-                    <ProjectList projects={completedProjects} loading={false} onProjectSelect={handleProjectSelect} />
+                    <ProjectList projects={completedProjects} loading={false} onProjectSelect={handleProjectSelect} onResume={handleResume} />
                   </div>
                 )}
               </>
@@ -322,14 +327,14 @@ export function Dashboard({ user }: DashboardProps) {
                 {activeProjects.length > 0 && (
                   <div>
                     <h3 className="text-xl font-semibold text-foreground mb-6">Active Projects ({activeProjects.length})</h3>
-                    <ProjectList projects={activeProjects} loading={false} onProjectSelect={handleProjectSelect} />
+                    <ProjectList projects={activeProjects} loading={false} onProjectSelect={handleProjectSelect} onResume={handleResume} />
                   </div>
                 )}
 
                 {completedProjects.length > 0 && (
                   <div>
                     <h3 className="text-xl font-semibold text-foreground mb-6">Completed Projects ({completedProjects.length})</h3>
-                    <ProjectList projects={completedProjects} loading={false} onProjectSelect={handleProjectSelect} />
+                    <ProjectList projects={completedProjects} loading={false} onProjectSelect={handleProjectSelect} onResume={handleResume} />
                   </div>
                 )}
               </div>
@@ -360,20 +365,30 @@ export function Dashboard({ user }: DashboardProps) {
 
       </main>
 
-      {showNewProject && (
+      {/* New Project Modal */}
+      {showNewProject && userData && (
         <NewProjectModal
           onClose={() => setShowNewProject(false)}
-          onSuccess={handleProjectCreated}
+          onSuccess={(newProject) => {
+            setShowNewProject(false)
+            // Refresh user data
+            handleDataUpdate()
+          }}
           userId={user.id}
           userData={userData}
         />
       )}
 
-      {showPricing && (
-        <Pricing
-          onClose={() => setShowPricing(false)}
-          currentPlan={userData.subscription.plan}
-          onUpgrade={handleDataUpdate}
+      {/* Content Generation Modal */}
+      {showContentGenerationModal && selectedProject && (
+        <ContentGenerationModal
+          project={selectedProject}
+          onClose={() => setShowContentGenerationModal(false)}
+          onStartGeneration={() => {
+            setShowContentGenerationModal(false)
+            // Refresh user data to show updated project status
+            handleDataUpdate()
+          }}
         />
       )}
 

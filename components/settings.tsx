@@ -20,15 +20,22 @@ export function Settings({ onUpdate }: SettingsProps) {
   const [showAddForm, setShowAddForm] = useState(false)
   const [editingAccount, setEditingAccount] = useState<string | null>(null)
   const [showAddApiKeyForm, setShowAddApiKeyForm] = useState<string | null>(null)
+  const [isDemoMode, setIsDemoMode] = useState(false)
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         const data = await supabaseApi.getUserData()
         setUserData(data)
+        // Check if we're in demo mode (no Supabase connection)
+        setIsDemoMode(!process.env.NEXT_PUBLIC_SUPABASE_URL)
       } catch (error) {
         console.error("Error fetching user data:", error)
         setMessage("Error loading settings")
+        // If error is about Supabase not being configured, set demo mode
+        if (error instanceof Error && error.message === 'Supabase not configured') {
+          setIsDemoMode(true)
+        }
       }
     }
     fetchData()
@@ -82,7 +89,11 @@ export function Settings({ onUpdate }: SettingsProps) {
       setShowAddApiKeyForm(null)
     } catch (error) {
       console.error("Error adding API key:", error)
-      setMessage("Error adding API key")
+      if (error instanceof Error && error.message === 'Supabase not configured') {
+        setMessage("Demo mode: API keys cannot be added without database connection")
+      } else {
+        setMessage("Error adding API key")
+      }
     }
   }
 
@@ -92,7 +103,11 @@ export function Settings({ onUpdate }: SettingsProps) {
       refreshData()
     } catch (error) {
       console.error("Error updating API key:", error)
-      setMessage("Error updating API key")
+      if (error instanceof Error && error.message === 'Supabase not configured') {
+        setMessage("Demo mode: API keys cannot be updated without database connection")
+      } else {
+        setMessage("Error updating API key")
+      }
     }
   }
 
@@ -103,7 +118,11 @@ export function Settings({ onUpdate }: SettingsProps) {
       refreshData()
     } catch (error) {
       console.error("Error deleting API key:", error)
-      setMessage("Error deleting API key")
+      if (error instanceof Error && error.message === 'Supabase not configured') {
+        setMessage("Demo mode: API keys cannot be deleted without database connection")
+      } else {
+        setMessage("Error deleting API key")
+      }
     }
   }
 
@@ -153,7 +172,11 @@ export function Settings({ onUpdate }: SettingsProps) {
       refreshData()
     } catch (error) {
       console.error("Error adding WordPress account:", error)
-      setMessage("Error adding WordPress account")
+      if (error instanceof Error && error.message === 'Supabase not configured') {
+        setMessage("Demo mode: WordPress accounts cannot be added without database connection")
+      } else {
+        setMessage("Error adding WordPress account")
+      }
     }
   }
 
@@ -201,6 +224,24 @@ export function Settings({ onUpdate }: SettingsProps) {
       <div className="mb-8">
         <h2 className="text-2xl font-bold text-gray-900">Settings</h2>
         <p className="text-gray-600">Configure your API keys and WordPress settings</p>
+        
+        {isDemoMode && (
+          <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <div className="flex items-center">
+              <div className="flex-shrink-0">
+                <svg className="h-5 w-5 text-yellow-400" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <div className="ml-3">
+                <h3 className="text-sm font-medium text-yellow-800">Demo Mode</h3>
+                <p className="text-sm text-yellow-700 mt-1">
+                  You're running in demo mode. API keys and WordPress accounts cannot be created, updated, or deleted without a database connection.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="space-y-6">
