@@ -306,7 +306,7 @@ class BlogGenerationService:
                     logger.info(f"📝 Storing blog in database: {blog_data['title']}")
                     
                     # Store in database with content
-                    blog_record = await self._store_blog(blog_create, blog_data["content"])
+                    blog_record = self._store_blog(blog_create, blog_data["content"])
                     
                     logger.info(f"✅ Blog stored in database: {blog_record['id']}")
                     
@@ -343,130 +343,126 @@ class BlogGenerationService:
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             raise
     
-    async def _store_blog(self, blog_create: BlogCreate, content: str) -> Dict[str, Any]:
-        """Store blog content in Supabase Storage and metadata in database"""
+    def _store_blog(self, blog_create: BlogCreate, content: str) -> dict:
+        """Store blog content and metadata"""
         try:
-            logger.info(f"🔍 Starting blog storage process")
+            logger.info("🔍 Starting blog storage process")
             logger.info(f"🔍 Blog title: {blog_create.title}")
             logger.info(f"🔍 Project ID: {blog_create.project_id}")
             logger.info(f"🔍 Content length: {len(content)} characters")
             
-            # Generate unique storage path
+            # Generate storage path
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            # Content is now passed as a parameter
-            title = blog_create.title or f"Blog {datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            prompt = blog_create.prompt or "Blog content generation"
-            ai_model = blog_create.ai_model or "openai"
-            word_count = blog_create.word_count or 0
-            status = blog_create.status or BlogStatus.DRAFT
-            project_id = blog_create.project_id
-            if not project_id:
-                raise ValueError("Project ID is required")
-            content_hash = hashlib.md5(content.encode()).hexdigest()
-            storage_path = f"blogs/{project_id}/{timestamp}_{content_hash[:8]}.json"
+            content_hash = hashlib.md5(content.encode()).hexdigest()[:8]
+            storage_path = f"blogs/{blog_create.project_id}/{timestamp}_{content_hash}.json"
             
             logger.info(f"📁 Generated storage path: {storage_path}")
             
-            # Prepare content for storage (JSON format for easy retrieval)
-            content_data = {
-                "title": title,
-                "content": content,
-                "prompt": prompt,
-                "ai_model": ai_model,
-                "word_count": word_count,
-                "generated_at": datetime.now().isoformat(),
-                "version": "1.0"
-            }
-            
-            # Store content in Supabase Storage
-            bucket_name = settings.STORAGE_BUCKET_NAME or "blog-content"
-            if not bucket_name:
-                bucket_name = "blog-content"
-            
-            logger.info(f"📦 Using storage bucket: {bucket_name}")
-            
-            storage_result = await self._store_content_in_storage(
-                bucket_name=bucket_name,
-                file_path=storage_path,
-                content=json.dumps(content_data, indent=2),
-                content_type="application/json"
-            )
-            
-            if not storage_result:
-                logger.warning(f"⚠️ Failed to store content in Supabase Storage, using database fallback")
-                # Store content directly in database as fallback
-                storage_path = f"database_fallback_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                bucket_name = "database"
-                logger.info(f"📝 Using database fallback for content storage")
-            else:
-                logger.info(f"✅ Content stored successfully in storage")
-            
-            # Calculate content size and hash
-            content_bytes = len(content.encode('utf-8'))
+            # Try S3 storage first
+            try:
+                logger.info("📦 Using S3 storage for blog content")
+                self.s3_storage.ensure_bucket_exists()
+                
+                # Create blog content data for S3
+                blog_content_data = {
+                    "title": blog_create.title,
+                    "content": content,
+                    "project_id": str(blog_create.project_id),
+                    "created_at": datetime.now().isoformat(),
+                    "word_count": len(content.split()),
+                    "content_size_bytes": len(content.encode('utf-8')),
+                    "content_hash": content_hash
+                }
+                
+                # Store in S3
+                s3_result = self.s3_storage.store_blog_content(storage_path, blog_content_data)
+                
+                if s3_result.get("success"):
+                    logger.info("✅ Blog content stored in S3 successfully")
+                    storage_bucket = "s3-blog-content"
+                else:
+                    raise Exception(f"S3 storage failed: {s3_result.get('error')}")
+                    
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to store content in S3: {str(e)}, using database fallback")
+                storage_bucket = "database"
+                storage_path = f"database_fallback_{timestamp}"
             
             # Prepare blog metadata for database
             blog_metadata = {
-                "project_id": project_id,
-                "title": title,
-                "status": status,
-                "word_count": word_count,
-                "prompt": prompt,
-                "ai_model": ai_model,
-                # Storage references
+                "project_id": str(blog_create.project_id),  # Convert UUID to string
+                "title": blog_create.title,
+                "status": blog_create.status.value if hasattr(blog_create.status, 'value') else str(blog_create.status),
+                "word_count": len(content.split()),
+                "prompt": blog_create.prompt,
+                "ai_model": blog_create.ai_model,
                 "storage_path": storage_path,
-                "storage_bucket": bucket_name,
-                "content_size_bytes": content_bytes,
+                "storage_bucket": storage_bucket,
+                "content_size_bytes": len(content.encode('utf-8')),
                 "content_hash": content_hash,
-                # Timestamps
                 "created_at": datetime.now().isoformat(),
                 "updated_at": datetime.now().isoformat()
             }
             
-            # If using database fallback, add content directly
-            if bucket_name == "database":
+            # Add content field for database fallback
+            if storage_bucket == "database":
                 blog_metadata["content"] = content
-                logger.info(f"📝 Using database fallback for content storage")
+                logger.info("📝 Using database fallback for content storage")
             
             logger.info(f"📝 Blog metadata prepared: {blog_metadata}")
-            logger.info(f"💾 Inserting blog metadata into database...")
             
-            # Insert metadata into blogs table
+            # Insert blog metadata into database
             try:
+                logger.info("💾 Inserting blog metadata into database...")
                 result = supabase_client.table("blogs").insert(blog_metadata).execute()
-                logger.info(f"✅ Database insert result: {result}")
-            except Exception as db_error:
-                logger.error(f"❌ Database insert failed: {db_error}")
-                # Try simplified insert without storage fields
-                simplified_metadata = {
-                    "project_id": project_id,
-                    "title": title,
-                    "status": status,
-                    "word_count": word_count,
-                    "prompt": prompt,
-                    "ai_model": ai_model,
-                    "content": content,  # Store content directly
-                    "created_at": datetime.now().isoformat(),
-                    "updated_at": datetime.now().isoformat()
-                }
-                logger.info(f"📝 Trying simplified insert with content field")
-                result = supabase_client.table("blogs").insert(simplified_metadata).execute()
-            
-            if result.data:
-                logger.info(f"💾 Blog stored successfully: {title}")
-                logger.info(f"📁 Content stored at: {storage_path}")
-                logger.info(f"🆔 Blog ID: {result.data[0]['id']}")
-                return result.data[0]
-            else:
-                logger.error(f"❌ No data returned from database insert")
-                logger.error(f"❌ Database result: {result}")
-                raise Exception("Failed to store blog metadata in database")
                 
+                if result.data:
+                    blog_record = result.data[0]
+                    logger.info(f"✅ Blog metadata stored in database: {blog_record.get('id')}")
+                    return blog_record
+                else:
+                    raise Exception("No data returned from database insert")
+                    
+            except Exception as db_error:
+                logger.error(f"❌ Database insert failed: {str(db_error)}")
+                
+                # Try simplified insert with content field
+                try:
+                    logger.info("📝 Trying simplified insert with content field")
+                    simplified_metadata = {
+                        "project_id": str(blog_create.project_id),  # Convert UUID to string
+                        "title": blog_create.title,
+                        "status": "generating",
+                        "word_count": len(content.split()),
+                        "prompt": blog_create.prompt,
+                        "ai_model": blog_create.ai_model,
+                        "storage_path": storage_path,
+                        "storage_bucket": storage_bucket,
+                        "content": content,  # Always include content for fallback
+                        "created_at": datetime.now().isoformat(),
+                        "updated_at": datetime.now().isoformat()
+                    }
+                    
+                    result = supabase_client.table("blogs").insert(simplified_metadata).execute()
+                    
+                    if result.data:
+                        blog_record = result.data[0]
+                        logger.info(f"✅ Blog stored with simplified metadata: {blog_record.get('id')}")
+                        return blog_record
+                    else:
+                        raise Exception("No data returned from simplified insert")
+                        
+                except Exception as simplified_error:
+                    logger.error(f"❌ Failed to store blog: {str(simplified_error)}")
+                    logger.error(f"❌ Error type: {type(simplified_error)}")
+                    logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+                    raise simplified_error
+                    
         except Exception as e:
-            logger.error(f"❌ Failed to store blog: {e}")
+            logger.error(f"❌ Failed to store blog: {str(e)}")
             logger.error(f"❌ Error type: {type(e)}")
-            import traceback
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
-            raise
+            raise e
     
     async def _store_content_in_storage(
         self, 
@@ -548,22 +544,40 @@ class BlogGenerationService:
             # Continue anyway, bucket might already exist
 
     async def get_blog_content(self, storage_path: str, bucket_name: str = None) -> Dict[str, Any]:
-        """Retrieve blog content from Supabase Storage"""
-        if bucket_name is None:
-            bucket_name = settings.STORAGE_BUCKET_NAME or "blog-content"
-        if not bucket_name:
-            bucket_name = "blog-content"
+        """Retrieve blog content from S3 or database"""
         try:
-            # Download content from storage
-            result = supabase_client.storage.from_(bucket_name).download(storage_path)
+            # If it's an S3 storage path, retrieve from S3
+            if bucket_name == "s3-blog-content" or storage_path.startswith("blogs/"):
+                logger.info(f"🔍 Retrieving content from S3: {storage_path}")
+                content_data = await self.s3_storage.retrieve_blog_content(storage_path)
+                if content_data:
+                    return content_data
+                else:
+                    raise Exception(f"Failed to retrieve content from S3: {storage_path}")
             
-            if result:
-                # Parse JSON content
-                content_data = json.loads(result.decode('utf-8'))
-                logger.info(f"✅ Retrieved content from {bucket_name}/{storage_path}")
-                return content_data
+            # If it's a database fallback, return None (content is in database)
+            elif bucket_name == "database":
+                logger.info(f"🔍 Content stored in database, not in S3")
+                return {"content": "Content stored in database", "storage_type": "database"}
+            
+            # Fallback to old Supabase storage method
             else:
-                raise Exception(f"Failed to retrieve content from {bucket_name}/{storage_path}")
+                logger.info(f"🔍 Falling back to Supabase storage: {bucket_name}/{storage_path}")
+                if bucket_name is None:
+                    bucket_name = settings.STORAGE_BUCKET_NAME or "blog-content"
+                if not bucket_name:
+                    bucket_name = "blog-content"
+                
+                # Download content from storage
+                result = supabase_client.storage.from_(bucket_name).download(storage_path)
+                
+                if result:
+                    # Parse JSON content
+                    content_data = json.loads(result.decode('utf-8'))
+                    logger.info(f"✅ Retrieved content from {bucket_name}/{storage_path}")
+                    return content_data
+                else:
+                    raise Exception(f"Failed to retrieve content from {bucket_name}/{storage_path}")
                 
         except Exception as e:
             logger.error(f"❌ Failed to retrieve blog content: {e}")

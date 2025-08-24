@@ -31,25 +31,11 @@ class S3StorageService:
             logger.error(f"❌ Failed to initialize S3 client: {e}")
             self.s3_client = None
     
-    async def store_blog_content(self, blog_id: str, content: str, project_name: str) -> str:
-        """Store blog content in S3 bucket and return the storage key"""
+    def store_blog_content(self, storage_path: str, content_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Store blog content in S3 bucket and return result"""
         try:
             if not self.s3_client:
                 raise Exception("S3 client not initialized")
-            
-            # Create a unique storage key
-            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-            storage_key = f"blogs/{project_name}/{blog_id}_{timestamp}.json"
-            
-            # Prepare content data
-            content_data = {
-                "blog_id": blog_id,
-                "project_name": project_name,
-                "content": content,
-                "timestamp": timestamp,
-                "ai_model": "openai",
-                "word_count": len(content.split())
-            }
             
             # Convert to JSON
             json_content = json.dumps(content_data, indent=2, ensure_ascii=False)
@@ -57,24 +43,24 @@ class S3StorageService:
             # Upload to S3
             self.s3_client.put_object(
                 Bucket=self.bucket_name,
-                Key=storage_key,
+                Key=storage_path,
                 Body=json_content.encode('utf-8'),
                 ContentType='application/json',
                 Metadata={
-                    'blog_id': blog_id,
-                    'project_name': project_name,
-                    'timestamp': timestamp
+                    'blog_id': content_data.get('project_id', 'unknown'),
+                    'project_name': content_data.get('project_id', 'unknown'),
+                    'timestamp': content_data.get('created_at', datetime.now().isoformat())
                 }
             )
             
-            logger.info(f"✅ Successfully stored blog content in S3: {storage_key}")
-            return storage_key
+            logger.info(f"✅ Successfully stored blog content in S3: {storage_path}")
+            return {"success": True, "storage_path": storage_path}
                 
         except Exception as e:
             logger.error(f"❌ Error storing blog content in S3: {e}")
-            raise
+            return {"success": False, "error": str(e)}
     
-    async def retrieve_blog_content(self, storage_key: str) -> Optional[Dict[str, Any]]:
+    def retrieve_blog_content(self, storage_path: str) -> Optional[Dict[str, Any]]:
         """Retrieve blog content from S3 bucket"""
         try:
             if not self.s3_client:
@@ -83,23 +69,23 @@ class S3StorageService:
             # Download content from S3
             response = self.s3_client.get_object(
                 Bucket=self.bucket_name,
-                Key=storage_key
+                Key=storage_path
             )
             
             if response:
                 content = response['Body'].read().decode('utf-8')
                 content_data = json.loads(content)
-                logger.info(f"✅ Successfully retrieved blog content from S3: {storage_key}")
+                logger.info(f"✅ Successfully retrieved blog content from S3: {storage_path}")
                 return content_data
             else:
-                logger.warning(f"⚠️ No content found for storage key: {storage_key}")
+                logger.warning(f"⚠️ No content found for storage path: {storage_path}")
                 return None
                 
         except Exception as e:
             logger.error(f"❌ Error retrieving blog content from S3: {e}")
             return None
     
-    async def delete_blog_content(self, storage_key: str) -> bool:
+    def delete_blog_content(self, storage_path: str) -> bool:
         """Delete blog content from S3 bucket"""
         try:
             if not self.s3_client:
@@ -108,36 +94,40 @@ class S3StorageService:
             # Delete content from S3
             response = self.s3_client.delete_object(
                 Bucket=self.bucket_name,
-                Key=storage_key
+                Key=storage_path
             )
             
             if response:
-                logger.info(f"✅ Successfully deleted blog content from S3: {storage_key}")
+                logger.info(f"✅ Successfully deleted blog content from S3: {storage_path}")
                 return True
             else:
-                logger.warning(f"⚠️ Failed to delete blog content from S3: {storage_key}")
+                logger.warning(f"⚠️ Failed to delete blog content from S3: {storage_path}")
                 return False
                 
         except Exception as e:
             logger.error(f"❌ Error deleting blog content from S3: {e}")
             return False
     
-    async def update_blog_content(self, blog_id: str, new_content: str, project_name: str, old_storage_key: Optional[str] = None) -> str:
+    def update_blog_content(self, storage_path: str, new_content_data: Dict[str, Any], old_storage_path: Optional[str] = None) -> Dict[str, Any]:
         """Update blog content in S3 bucket"""
         try:
             # Delete old content if it exists
-            if old_storage_key:
-                await self.delete_blog_content(old_storage_key)
+            if old_storage_path:
+                self.delete_blog_content(old_storage_path)
             
             # Store new content
-            new_storage_key = await self.store_blog_content(blog_id, new_content, project_name)
+            result = self.store_blog_content(storage_path, new_content_data)
             
-            logger.info(f"✅ Successfully updated blog content in S3: {new_storage_key}")
-            return new_storage_key
-            
+            if result.get("success"):
+                logger.info(f"✅ Successfully updated blog content in S3: {storage_path}")
+                return result
+            else:
+                logger.error(f"❌ Failed to update blog content in S3: {result.get('error')}")
+                return result
+                
         except Exception as e:
             logger.error(f"❌ Error updating blog content in S3: {e}")
-            raise
+            return {"success": False, "error": str(e)}
     
     def get_public_url(self, storage_key: str) -> str:
         """Get public URL for blog content"""
@@ -149,7 +139,7 @@ class S3StorageService:
             logger.error(f"❌ Error getting public URL: {e}")
             return ""
     
-    async def ensure_bucket_exists(self) -> bool:
+    def ensure_bucket_exists(self) -> bool:
         """Ensure the blog-content bucket exists in S3"""
         try:
             if not self.s3_client:
@@ -180,7 +170,7 @@ class S3StorageService:
             logger.error(f"❌ Error ensuring bucket exists: {e}")
             return False
     
-    async def test_connection(self) -> bool:
+    def test_connection(self) -> bool:
         """Test S3 connection and bucket access"""
         try:
             if not self.s3_client:
@@ -199,7 +189,7 @@ class S3StorageService:
             logger.error(f"❌ S3 connection test failed: {e}")
             return False
     
-    async def get_bucket_info(self) -> Dict[str, Any]:
+    def get_bucket_info(self) -> Dict[str, Any]:
         """Get information about the S3 bucket"""
         try:
             if not self.s3_client:
