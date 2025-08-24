@@ -131,7 +131,8 @@ export function ContentGenerationModal({
     setIsGenerating(true);
     
     try {
-      const response = await fetch('/api/content-generation/generate', {
+      // Use the direct generation endpoint for immediate results
+      const response = await fetch('http://localhost:8000/api/content-generation/generate-direct', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -142,30 +143,36 @@ export function ContentGenerationModal({
           num_blogs: numBlogs,
           ai_model: aiModel,
           ai_model_version: aiModelVersion,
-          batch_size: batchSize
+          batch_size: numBlogs, // Use numBlogs as batch size for direct generation
         }),
       });
 
       if (response.ok) {
         const data = await response.json();
         toast({
-          title: "Generation Started",
-          description: data.message,
+          title: "Success",
+          description: `Successfully generated ${data.blogs_requested} blogs!`,
         });
         
-        // Fetch initial status
-        await fetchGenerationStatus();
+        // Close modal after successful generation
+        setTimeout(() => {
+          onClose();
+          // Trigger page refresh to show new blogs
+          window.location.reload();
+        }, 2000);
+        
       } else {
         const error = await response.json();
-        throw new Error(error.detail || 'Failed to start generation');
+        throw new Error(error.detail || 'Failed to generate blogs');
       }
     } catch (error) {
-      console.error('Error starting generation:', error);
+      console.error('Error generating blogs:', error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : 'Failed to start generation',
+        description: error instanceof Error ? error.message : 'Failed to generate blogs. Please check your API keys.',
         variant: "destructive"
       });
+    } finally {
       setIsGenerating(false);
     }
   };

@@ -51,6 +51,6 @@ class ProjectStatus(BaseModel):
     status: str
     progress: int = Field(..., ge=0, le=100, description="Progress percentage")
     blogs_generated: int = Field(default=0, description="Number of blogs generated")
-    total_blogs: int = Field(..., description="Total number of blogs")
+    num_blogs: int = Field(..., description="Number of blogs to generate")
     created_at: datetime
     updated_at: datetime

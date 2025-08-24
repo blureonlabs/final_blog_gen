@@ -6,9 +6,9 @@ export interface Project {
   id: string
   name: string
   description: string
-  total_blogs: number
+  num_blogs: number
   completed_blogs: number
-  status: "pending" | "in_progress" | "completed" | "failed"
+  status: "pending" | "in_progress" | "completed" | "failed" | "ready"
   wordpress_account_id?: string
   api_keys?: any
   settings?: any
@@ -531,9 +531,9 @@ class SupabaseAPI {
           id: `mock-project-${Date.now()}`,
           name: project.name,
           description: project.description,
-          total_blogs: project.total_blogs,
+          num_blogs: project.num_blogs,
           completed_blogs: 0,
-          status: "pending" as const,
+          status: project.status, // Use the status passed from the modal
           wordpress_account_id: project.wordpress_account_id,
           api_keys: project.api_keys,
           settings: project.settings,
@@ -553,7 +553,7 @@ class SupabaseAPI {
         user_id: userId,
         name: project.name,
         description: project.description,
-        total_blogs: project.total_blogs,
+        num_blogs: project.num_blogs,
         completed_blogs: project.completed_blogs,
         status: project.status,
         wordpress_account_id: project.wordpress_account_id,

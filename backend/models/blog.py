@@ -20,17 +20,18 @@ class BlogCreate(BaseModel):
     """Model for creating a new blog"""
     project_id: UUID
     title: Optional[str] = None
-    content: Optional[str] = None
+    # content field removed - content is now stored in Supabase Storage
     prompt: str
     ai_model: str = "openai"
     ai_model_version: Optional[str] = None
     seo_meta: Optional[Dict[str, Any]] = None
     status: BlogStatus = BlogStatus.DRAFT
+    word_count: Optional[int] = None
 
 class BlogUpdate(BaseModel):
     """Model for updating a blog"""
     title: Optional[str] = None
-    content: Optional[str] = None
+    # content field removed - content is now stored in Supabase Storage
     seo_meta: Optional[Dict[str, Any]] = None
     status: Optional[BlogStatus] = None
     wordpress_url: Optional[str] = None
@@ -43,12 +44,18 @@ class BlogResponse(BaseModel):
     id: UUID
     project_id: UUID
     title: Optional[str] = None
-    content: Optional[str] = None
+    # content field removed - content is now stored in Supabase Storage
     prompt: str
     ai_model: str
     ai_model_version: Optional[str] = None
     seo_meta: Optional[Dict[str, Any]] = None
     status: BlogStatus
+    word_count: Optional[int] = None
+    # Storage references
+    storage_path: Optional[str] = None
+    storage_bucket: Optional[str] = None
+    content_size_bytes: Optional[int] = None
+    content_hash: Optional[str] = None
     wordpress_url: Optional[str] = None
     wordpress_post_id: Optional[str] = None
     error_message: Optional[str] = None

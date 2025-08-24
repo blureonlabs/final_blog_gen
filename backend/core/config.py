@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY")
     SERP_API_KEY: Optional[str] = os.getenv("SERP_API_KEY")
     
+    # Storage Configuration
+    STORAGE_BUCKET_NAME: str = os.getenv("STORAGE_BUCKET_NAME", "blog-content")
+    STORAGE_REGION: str = os.getenv("STORAGE_REGION", "auto")
+    
     # Redis settings
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
     

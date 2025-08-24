@@ -24,36 +24,55 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
   const [showContentGenerationModal, setShowContentGenerationModal] = useState(false)
 
   useEffect(() => {
+    console.log("🔄 ProjectDetail useEffect triggered with initialProject:", initialProject)
+    console.log("🔍 initialProject num_blogs:", initialProject?.num_blogs)
     if (initialProject) {
       loadProjectData(initialProject)
     }
   }, [initialProject])
 
   const loadProjectData = async (foundProject: Project) => {
+    console.log("🚀 loadProjectData called with project:", foundProject)
+    console.log("🔍 Initial project num_blogs:", foundProject?.num_blogs)
+    console.log("🔍 Initial project ID:", foundProject?.id)
 
     if (foundProject) {
       // First, try to get updated project status from backend
       try {
         console.log("🔄 Fetching updated project status from backend...")
         const projectResponse = await fetch(`http://localhost:8000/api/projects/${projectId}`)
+        console.log("📡 Backend response status:", projectResponse.status)
+        
         if (projectResponse.ok) {
           const backendProject = await projectResponse.json()
           console.log("📊 Backend project data:", backendProject)
+          console.log("🔍 Backend num_blogs:", backendProject.num_blogs)
+          console.log("🔍 Backend project ID:", backendProject.id)
+          console.log("🔍 Frontend num_blogs:", foundProject.num_blogs)
+          console.log("🔍 Frontend project ID:", foundProject.id)
           
-          // Update project with backend data
+          // Update project with backend data - CRITICAL: Use backend ID
           const updatedProject = {
             ...foundProject,
+            ...backendProject, // Merge all backend data to ensure num_blogs is included
+            id: backendProject.id, // CRITICAL: Use the real database ID
             status: backendProject.status || foundProject.status,
             updated_at: backendProject.updated_at || foundProject.updated_at
           }
           console.log("🔄 Updated project with backend data:", updatedProject)
+          console.log("🔍 Final num_blogs:", updatedProject.num_blogs)
+          console.log("🔍 Final project ID:", updatedProject.id)
           setProject(updatedProject)
         } else {
           console.log("⚠️ Could not fetch project status from backend, using local data")
+          console.log("🔍 Using local project num_blogs:", foundProject.num_blogs)
+          console.log("🔍 Using local project ID:", foundProject.id)
           setProject(foundProject)
         }
       } catch (error) {
         console.log("❌ Backend project API not available, using local data:", error)
+        console.log("🔍 Using local project num_blogs:", foundProject.num_blogs)
+        console.log("🔍 Using local project ID:", foundProject.id)
         setProject(foundProject)
       }
 
@@ -70,21 +89,24 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
           
           if (apiData.blogs && apiData.blogs.length > 0) {
             // Map backend blog statuses to frontend statuses
-            const mappedBlogs = apiData.blogs.map((blog: any) => {
-              const mappedStatus = mapBackendStatusToFrontend(blog.status)
-              console.log(`🔄 Mapping blog "${blog.title}": ${blog.status} → ${mappedStatus}`)
-              return {
-                id: blog.id,
-                title: blog.title,
-                status: mappedStatus,
-                word_count: blog.word_count || 0,
-                created_at: blog.created_at,
-                published_at: blog.status === "ready" ? blog.created_at : undefined,
-                content: blog.content,
-                prompt: blog.prompt,
-                ai_model: blog.ai_model
-              }
-            })
+                         const mappedBlogs = apiData.blogs.map((blog: any) => {
+               const mappedStatus = mapBackendStatusToFrontend(blog.status)
+               console.log(`🔄 Mapping blog "${blog.title}": ${blog.status} → ${mappedStatus}`)
+               return {
+                 id: blog.id,
+                 title: blog.title,
+                 status: mappedStatus,
+                 word_count: blog.word_count || 0,
+                 created_at: blog.created_at,
+                 published_at: blog.status === "ready" ? blog.created_at : undefined,
+                 content: "", // Content is now stored in Supabase Storage, not in database
+                 prompt: blog.prompt || "",
+                 ai_model: blog.ai_model || "",
+                 wordpress_url: blog.wordpress_url || null,
+                 storage_path: blog.storage_path || null,
+                 storage_bucket: blog.storage_bucket || null
+               }
+             })
             
             console.log("✅ Final mapped blogs for frontend:", mappedBlogs)
             setBlogs(mappedBlogs)
@@ -102,29 +124,38 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
         console.log("❌ Backend API not available, using mock data:", error)
       }
 
-      // Fallback to mock data if backend is not available
-      const generatedBlogs: Blog[] = []
-      const statusDistribution = [
-        { status: "published", count: Math.floor(foundProject.completed_blogs * 0.7) },
-        { status: "draft", count: Math.floor(foundProject.completed_blogs * 0.2) },
-        { status: "generating", count: Math.floor(foundProject.completed_blogs * 0.05) },
-        { status: "failed", count: Math.floor(foundProject.completed_blogs * 0.05) },
-      ]
+             // Fallback to mock data if backend is not available
+       const generatedBlogs: Blog[] = []
+       const statusDistribution = [
+         { status: "published", count: Math.floor(foundProject.completed_blogs * 0.7) },
+         { status: "draft", count: Math.floor(foundProject.completed_blogs * 0.2) },
+         { status: "generating", count: Math.floor(foundProject.completed_blogs * 0.05) },
+         { status: "failed", count: Math.floor(foundProject.completed_blogs * 0.05) },
+       ]
 
-      let blogIndex = 1
-      statusDistribution.forEach(({ status, count }) => {
-        for (let i = 0; i < count; i++) {
-          generatedBlogs.push({
-            id: `blog-${blogIndex}`,
-            title: `Blog Post ${blogIndex}: ${generateBlogTitle(foundProject.name)}`,
-            status: status as Blog["status"],
-            word_count: Math.floor(Math.random() * 1000) + 500,
-            created_at: new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000).toISOString(),
-            published_at: status === "published" ? new Date().toISOString() : undefined,
-          })
-          blogIndex++
-        }
-      })
+       let blogIndex = 1
+       statusDistribution.forEach(({ status, count }) => {
+         for (let i = 0; i < count; i++) {
+           const blogTitle = `Blog Post ${blogIndex}: ${generateBlogTitle(foundProject.name)}`
+           const blogContent = generateMockBlogContent(blogTitle, foundProject.name)
+           
+           generatedBlogs.push({
+             id: `blog-${blogIndex}`,
+             title: blogTitle,
+             status: status as Blog["status"],
+             word_count: blogContent.split(' ').length,
+             created_at: new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000).toISOString(),
+             published_at: status === "published" ? new Date().toISOString() : undefined,
+             content: blogContent,
+             prompt: `Generate content about ${foundProject.name}`,
+             ai_model: "openai",
+             wordpress_url: status === "published" ? `https://yourwordpress.com/blog-${blogIndex}` : `https://yourwordpress.com/draft-${blogIndex}`,
+             storage_path: `blogs/${foundProject.id}/mock_${blogIndex}.json`,
+             storage_bucket: "blog-content"
+           })
+           blogIndex++
+         }
+       })
 
       setBlogs(generatedBlogs)
     }
@@ -136,7 +167,7 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
   const mapBackendStatusToFrontend = (backendStatus: string): Blog["status"] => {
     switch (backendStatus) {
       case "ready":
-        return "published"
+        return "ready"  // Keep as "ready" for preview functionality
       case "generating":
         return "generating"
       case "draft":
@@ -165,6 +196,148 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
       "Essential Strategies",
     ]
     return titles[Math.floor(Math.random() * titles.length)]
+  }
+
+  const generateMockBlogContent = (title: string, projectName: string): string => {
+    const contentTemplates = [
+      `# ${title}
+
+## Introduction
+
+Welcome to our comprehensive guide on ${projectName}. This article will provide you with everything you need to know to get started and succeed in this field.
+
+## What is ${projectName}?
+
+${projectName} represents a revolutionary approach to content creation and management. It combines cutting-edge technology with user-friendly interfaces to deliver exceptional results.
+
+## Key Benefits
+
+- **Efficiency**: Streamlined workflows that save time and resources
+- **Quality**: AI-powered content generation that maintains high standards
+- **Scalability**: Easy to scale from small projects to enterprise-level operations
+- **Integration**: Seamless integration with existing tools and platforms
+
+## Getting Started
+
+To begin your journey with ${projectName}, follow these simple steps:
+
+1. **Setup**: Configure your account and preferences
+2. **Configuration**: Choose your AI models and settings
+3. **Generation**: Start creating content with your prompts
+4. **Review**: Edit and refine generated content as needed
+5. **Publish**: Share your content across various platforms
+
+## Best Practices
+
+- Always review AI-generated content before publishing
+- Use specific and detailed prompts for better results
+- Maintain consistency in your content style and tone
+- Regularly update your AI model preferences
+
+## Conclusion
+
+${projectName} offers an innovative solution for modern content creators. By leveraging the power of artificial intelligence, you can produce high-quality content faster than ever before.
+
+Start exploring the possibilities today and transform your content creation process!`,
+
+      `# ${title}
+
+## Overview
+
+In this comprehensive article, we'll explore the fascinating world of ${projectName} and discover how it's revolutionizing the way we approach content creation.
+
+## Understanding ${projectName}
+
+${projectName} is more than just a tool—it's a complete ecosystem designed to enhance your creative capabilities. Whether you're a seasoned professional or just starting out, this platform provides the resources you need to succeed.
+
+## Core Features
+
+### AI-Powered Generation
+The heart of ${projectName} lies in its advanced artificial intelligence capabilities. Using state-of-the-art language models, it can generate content that's not only relevant but also engaging and informative.
+
+### Smart Workflow Management
+Efficient project management tools help you organize your work, track progress, and collaborate with team members seamlessly.
+
+### Quality Assurance
+Built-in quality checks ensure that every piece of content meets your standards before publication.
+
+## Real-World Applications
+
+- **Blog Writing**: Create engaging blog posts on any topic
+- **Marketing Content**: Generate compelling marketing copy
+- **Educational Materials**: Develop comprehensive learning resources
+- **Social Media**: Craft engaging social media posts
+
+## Tips for Success
+
+1. **Be Specific**: The more detailed your prompts, the better your results
+2. **Iterate**: Don't settle for the first draft—refine and improve
+3. **Stay Consistent**: Maintain your brand voice across all content
+4. **Monitor Performance**: Track how your content performs and adjust accordingly
+
+## Future of ${projectName}
+
+As technology continues to evolve, ${projectName} will only become more powerful and intuitive. Stay ahead of the curve by embracing these innovative tools today.
+
+## Final Thoughts
+
+${projectName} represents the future of content creation. By combining human creativity with artificial intelligence, you can achieve results that were previously impossible.
+
+Embrace the future and start creating amazing content with ${projectName}!`,
+
+      `# ${title}
+
+## Executive Summary
+
+${projectName} has emerged as a game-changing solution in the digital content landscape. This comprehensive analysis explores how this innovative platform is transforming the way businesses and creators approach content generation.
+
+## The ${projectName} Revolution
+
+In today's fast-paced digital world, content creation has become both a necessity and a challenge. ${projectName} addresses this by providing an intelligent, scalable solution that leverages cutting-edge artificial intelligence.
+
+## Key Innovation Areas
+
+### 1. **Intelligent Content Generation**
+${projectName} uses advanced language models to understand context, tone, and audience preferences, resulting in content that resonates with readers.
+
+### 2. **Workflow Optimization**
+The platform streamlines the entire content creation process, from ideation to publication, saving valuable time and resources.
+
+### 3. **Quality Assurance**
+Built-in quality checks and human review workflows ensure that every piece of content meets professional standards.
+
+## Market Impact
+
+${projectName} is not just another tool—it's a paradigm shift in content creation. Early adopters report:
+- 70% reduction in content creation time
+- 85% improvement in content quality
+- 60% increase in audience engagement
+
+## Implementation Strategy
+
+### Phase 1: Foundation
+- Set up your account and configure preferences
+- Integrate with existing tools and workflows
+- Train your team on best practices
+
+### Phase 2: Optimization
+- Analyze performance metrics
+- Refine AI model settings
+- Implement advanced features
+
+### Phase 3: Scale
+- Expand to multiple content types
+- Integrate with marketing automation
+- Leverage analytics for continuous improvement
+
+## Conclusion
+
+${projectName} represents the future of content creation. By embracing this technology, organizations can stay competitive in an increasingly content-driven marketplace.
+
+The question is not whether to adopt ${projectName}, but how quickly you can implement it to gain a competitive advantage.`
+    ]
+    
+    return contentTemplates[Math.floor(Math.random() * contentTemplates.length)]
   }
 
   const getStatusColor = (status: string) => {
@@ -281,9 +454,57 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
     }, 1000)
   }
 
-  const handleStartContentGeneration = () => {
-    console.log("[v0] Opening content generation modal...")
-    setShowContentGenerationModal(true)
+  const handleStartContentGeneration = async () => {
+    console.log("[v0] Starting content generation...")
+    console.log("🔍 Project object:", project)
+    console.log("🔍 Project num_blogs:", project?.num_blogs)
+    console.log("🔍 Project ID being sent:", project?.id)
+    console.log("🔍 Project ID type:", typeof project?.id)
+    
+    if (!project) return
+    
+    try {
+      // Call the direct blog generation API
+      const requestBody = {
+        project_id: project.id,
+        prompt: `Generate content about ${project.name}: ${project.description}`,
+        num_blogs: project.num_blogs,
+        ai_model: "openai", // Default to OpenAI, can be made configurable
+        ai_model_version: "gpt-4",
+        batch_size: 5
+      }
+      
+      console.log("📤 Request body:", requestBody)
+      console.log("📤 Project ID in request:", requestBody.project_id)
+      
+      const response = await fetch('http://localhost:8000/api/content-generation/generate-direct', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody)
+      })
+      
+      if (response.ok) {
+        const result = await response.json()
+        console.log("✅ Blog generation started:", result)
+        
+        // Refresh project data to show new blogs
+        setTimeout(async () => {
+          await loadProjectData(project)
+          onUpdate()
+        }, 3000)
+        
+        setShowContentGenerationModal(false)
+      } else {
+        const error = await response.text()
+        console.error("❌ Blog generation failed:", error)
+        alert(`Blog generation failed: ${error}`)
+      }
+    } catch (error) {
+      console.error("❌ Error starting blog generation:", error)
+      alert("Failed to start blog generation. Please check your API keys and try again.")
+    }
   }
 
   const handleStartGeneration = () => {
@@ -293,10 +514,10 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
     // For now, we'll just simulate it
     const newBlogs: Blog[] = []
     const statusDistribution = [
-      { status: "published", count: Math.floor(project!.total_blogs * 0.7) },
-      { status: "draft", count: Math.floor(project!.total_blogs * 0.2) },
-      { status: "generating", count: Math.floor(project!.total_blogs * 0.05) },
-      { status: "failed", count: Math.floor(project!.total_blogs * 0.05) },
+      { status: "published", count: Math.floor(project!.num_blogs * 0.7) },
+      { status: "draft", count: Math.floor(project!.num_blogs * 0.2) },
+      { status: "generating", count: Math.floor(project!.num_blogs * 0.05) },
+      { status: "failed", count: Math.floor(project!.num_blogs * 0.05) },
     ]
 
     let blogIndex = 1
@@ -352,8 +573,8 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
   const failedBlogs = blogs.filter((blog) => blog.status === "failed").length
   const postingBlogs = blogs.filter((blog) => blog.status === "publishing").length
 
-  const progressPercentage = project.total_blogs > 0 ? (blogs.length / project.total_blogs) * 100 : 0
-  const publishedPercentage = project.total_blogs > 0 ? (publishedBlogs / project.total_blogs) * 100 : 0
+  const progressPercentage = project.num_blogs > 0 ? (blogs.length / project.num_blogs) * 100 : 0
+  const publishedPercentage = project.num_blogs > 0 ? (publishedBlogs / project.num_blogs) * 100 : 0
 
   return (
     <div>
@@ -385,17 +606,18 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
             Refresh
           </Button>
 
-          {/* Start Content Generation Button */}
-          {(project.status === "pending" || project.status === "in_progress") && (
-            <Button
-              onClick={handleStartContentGeneration}
-              className="bg-green-600 hover:bg-green-700 text-white"
-              size="sm"
-            >
-              <FileText className="h-4 w-4 mr-2" />
-              {project.status === "pending" ? "Start Content Generation" : "Resume Content Generation"}
-            </Button>
-          )}
+                     {/* Start Content Generation Button */}
+           {(project.status === "pending" || project.status === "in_progress" || project.status === "ready") && (
+             <Button
+               onClick={handleStartContentGeneration}
+               className="bg-green-600 hover:bg-green-700 text-white"
+               size="sm"
+             >
+               <FileText className="h-4 w-4 mr-2" />
+               {project.status === "ready" ? "Start Content Generation" : 
+                project.status === "pending" ? "Start Content Generation" : "Resume Content Generation"}
+             </Button>
+           )}
 
           {/* Show status when generating */}
           {project.status === "running" && (
@@ -452,24 +674,32 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
           <div className="space-y-6">
             {/* Project Configuration Section */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
-              <div>
-                <h4 className="text-sm font-medium text-gray-700 mb-2">WordPress Account</h4>
-                <p className="text-sm text-gray-900 font-medium">{project.wordpress_account}</p>
-              </div>
-              <div>
-                <h4 className="text-sm font-medium text-gray-700 mb-2">API Keys Used</h4>
-                <div className="space-y-1">
-                  <p className="text-xs text-gray-600">
-                    OpenAI: <span className="font-medium">{project.api_keys.openai}</span>
-                  </p>
-                  <p className="text-xs text-gray-600">
-                    Gemini: <span className="font-medium">{project.api_keys.gemini}</span>
-                  </p>
-                  <p className="text-xs text-gray-600">
-                    SERP: <span className="font-medium">{project.api_keys.serp}</span>
-                  </p>
-                </div>
-              </div>
+                             <div>
+                 <h4 className="text-sm font-medium text-gray-700 mb-2">WordPress Account</h4>
+                 <p className="text-sm text-gray-900 font-medium">
+                   {project.wordpress_account || "Not configured yet"}
+                 </p>
+               </div>
+                             <div>
+                 <h4 className="text-sm font-medium text-gray-700 mb-2">API Keys Used</h4>
+                 <div className="space-y-1">
+                   {project.api_keys ? (
+                     <>
+                       <p className="text-xs text-gray-600">
+                         OpenAI: <span className="font-medium">{project.api_keys.openai || "Not configured"}</span>
+                       </p>
+                       <p className="text-xs text-gray-600">
+                         Gemini: <span className="font-medium">{project.api_keys.gemini || "Not configured"}</span>
+                       </p>
+                       <p className="text-xs text-gray-600">
+                         SERP: <span className="font-medium">{project.api_keys.serp || "Not configured"}</span>
+                       </p>
+                     </>
+                   ) : (
+                     <p className="text-xs text-gray-500 italic">API keys not configured yet</p>
+                   )}
+                 </div>
+               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -477,7 +707,7 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium text-gray-700">Blogs Generated</span>
                   <span className="text-sm text-gray-600">
-                    {blogs.length} of {project.total_blogs} blogs
+                    {blogs.length} of {project.num_blogs} blogs
                   </span>
                 </div>
                 <Progress value={progressPercentage} className="h-2" />
@@ -487,7 +717,7 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium text-gray-700">Published</span>
                   <span className="text-sm text-gray-600">
-                    {publishedBlogs} of {project.total_blogs} published
+                    {publishedBlogs} of {project.num_blogs} published
                   </span>
                 </div>
                 <Progress value={publishedPercentage} className="h-2" />
@@ -551,7 +781,7 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
                     <div className="text-yellow-700">Ready for Review</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-lg font-bold text-gray-600">{project.total_blogs - blogs.length}</div>
+                    <div className="text-lg font-bold text-gray-600">{project.num_blogs - blogs.length}</div>
                     <div className="text-gray-700">Remaining</div>
                   </div>
                 </div>
@@ -584,8 +814,8 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
               <div className="bg-white p-4 rounded-lg border border-blue-200">
                 <h4 className="font-medium text-blue-900 mb-3">⏱️ Estimated Completion</h4>
                 <div className="text-sm text-blue-800">
-                  <p><strong>Current Progress:</strong> {blogs.length} of {project.total_blogs} blogs</p>
-                  <p><strong>Estimated Time:</strong> {Math.ceil((project.total_blogs - blogs.length) / 5)} minutes remaining</p>
+                          <p><strong>Current Progress:</strong> {blogs.length} of {project.num_blogs} blogs</p>
+        <p><strong>Estimated Time:</strong> {Math.ceil((project.num_blogs - blogs.length) / 5)} minutes remaining</p>
                   <p><strong>Status:</strong> {project.status === "running" ? "🔄 Active" : "⏸️ Paused"}</p>
                 </div>
               </div>
@@ -630,6 +860,13 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
                     </div>
                   </div>
                   <div className="flex items-center space-x-2">
+                    {blog.status === "generating" && (
+                      <div className="flex items-center space-x-2 text-blue-600">
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                        <span className="text-sm">Generating...</span>
+                      </div>
+                    )}
+
                     {blog.status === "draft" && (
                       <Button
                         onClick={() => handlePublishSingle(blog.id)}
@@ -642,24 +879,31 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
                       </Button>
                     )}
 
-                    <Button
-                      onClick={() => setSelectedBlog(blog)}
-                      variant="outline"
-                      size="sm"
-                      className="border-gray-300 text-gray-600 hover:bg-gray-50"
-                    >
-                      <Eye className="h-4 w-4 mr-2" />
-                      Preview
-                    </Button>
-                    {blog.status === "published" && (
+                    {blog.status === "ready" && (
                       <Button
-                        onClick={() => window.open(`https://example.com/blog/${blog.id}`, "_blank")}
+                        onClick={() => setSelectedBlog(blog)}
                         variant="outline"
                         size="sm"
-                        className="border-gray-300 text-gray-600 hover:bg-gray-50"
+                        className="border-blue-300 text-blue-600 hover:bg-blue-50"
+                      >
+                        <Eye className="h-4 w-4 mr-2" />
+                        Preview
+                      </Button>
+                    )}
+
+                    {blog.wordpress_url && (
+                      <Button
+                        onClick={() => window.open(blog.wordpress_url, "_blank")}
+                        variant="outline"
+                        size="sm"
+                        className={`${
+                          blog.status === "published" 
+                            ? "border-green-300 text-green-600 hover:bg-green-50" 
+                            : "border-gray-300 text-gray-600 hover:bg-gray-50"
+                        }`}
                       >
                         <ExternalLink className="h-4 w-4 mr-2" />
-                        View Live
+                        {blog.status === "published" ? "View Live" : "View Draft"}
                       </Button>
                     )}
                   </div>

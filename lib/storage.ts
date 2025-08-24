@@ -2,10 +2,10 @@ export interface Project {
   id: string
   name: string
   description: string
-  total_blogs: number
+  num_blogs: number
   completed_blogs: number
-  status: "in_progress" | "completed" | "failed"
-  wordpress_account: string
+  status: "pending" | "in_progress" | "completed" | "failed" | "ready"
+  wordpress_account_id: string
   api_keys: {
     openai: string
     gemini: string
@@ -14,15 +14,26 @@ export interface Project {
   created_at: string
   updated_at: string
   blogs?: Blog[]
+  // AI Model Configuration
+  draft_creation_model?: string
+  content_vetting_model?: string
+  model_settings?: any
+  workflow_preferences?: any
 }
 
 export interface Blog {
   id: string
   title: string
-  status: "generating" | "draft" | "publishing" | "published" | "failed"
+  status: "generating" | "draft" | "publishing" | "published" | "failed" | "ready"
   word_count: number
   created_at: string
   published_at?: string
+  content?: string
+  prompt?: string
+  ai_model?: string
+  wordpress_url?: string | null
+  storage_path?: string | null
+  storage_bucket?: string | null
 }
 
 export interface WordPressAccount {

@@ -9,9 +9,9 @@ interface Project {
   id: string
   name: string
   description: string
-  total_blogs: number
+  num_blogs: number
   completed_blogs: number
-  status: "in_progress" | "completed" | "failed" | "pending"
+  status: "in_progress" | "completed" | "failed" | "pending" | "ready"
   created_at: string
   updated_at: string
 }
@@ -32,6 +32,10 @@ export function ProjectList({ projects, loading, onProjectSelect, onResume }: Pr
         return <PlayCircle className="h-4 w-4 text-blue-600" />
       case "failed":
         return <AlertCircle className="h-4 w-4 text-red-600" />
+      case "pending":
+        return <Clock className="h-4 w-4 text-yellow-600" />
+      case "ready":
+        return <PlayCircle className="h-4 w-4 text-green-600" />
       default:
         return <Clock className="h-4 w-4 text-gray-400" />
     }
@@ -45,6 +49,10 @@ export function ProjectList({ projects, loading, onProjectSelect, onResume }: Pr
         return "bg-blue-100 text-blue-800"
       case "failed":
         return "bg-red-100 text-red-800"
+      case "pending":
+        return "bg-yellow-100 text-yellow-800"
+      case "ready":
+        return "bg-green-100 text-green-800"
       default:
         return "bg-gray-100 text-gray-800"
     }
@@ -58,8 +66,12 @@ export function ProjectList({ projects, loading, onProjectSelect, onResume }: Pr
         return "Completed"
       case "failed":
         return "Failed"
+      case "pending":
+        return "Ready to Start"
+      case "ready":
+        return "Ready to Start"
       default:
-        return "Pending"
+        return "Unknown"
     }
   }
 
@@ -97,7 +109,7 @@ export function ProjectList({ projects, loading, onProjectSelect, onResume }: Pr
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
       {projects.map((project) => {
-        const progressPercentage = (project.completed_blogs / project.total_blogs) * 100
+        const progressPercentage = (project.completed_blogs / project.num_blogs) * 100
 
         return (
           <Card
@@ -109,18 +121,24 @@ export function ProjectList({ projects, loading, onProjectSelect, onResume }: Pr
               <div className="flex items-center justify-between">
                 <CardTitle className="text-lg font-medium text-gray-900 truncate">{project.name}</CardTitle>
                 <div className="flex items-center space-x-2">
-                  {project.status === "in_progress" && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onResume(project)
-                      }}
-                      className="p-2 bg-blue-100 hover:bg-blue-200 rounded-full transition-colors"
-                      title="Resume Content Generation"
-                    >
-                      <PlayCircle className="h-4 w-4 text-blue-600" />
-                    </button>
-                  )}
+                                     {(project.status === "in_progress" || project.status === "pending" || project.status === "ready") && (
+                     <button
+                       onClick={(e) => {
+                         e.stopPropagation()
+                         onResume(project)
+                       }}
+                       className={`p-2 rounded-full transition-colors ${
+                         project.status === "ready" || project.status === "pending"
+                           ? "bg-green-100 hover:bg-green-200" 
+                           : "bg-blue-100 hover:bg-blue-200"
+                       }`}
+                       title={project.status === "ready" || project.status === "pending" ? "Start Content Generation" : "Resume Content Generation"}
+                     >
+                       <PlayCircle className={`h-4 w-4 ${
+                         project.status === "ready" || project.status === "pending" ? "text-green-600" : "text-blue-600"
+                       }`} />
+                     </button>
+                   )}
                   {getStatusIcon(project.status)}
                 </div>
               </div>
@@ -131,7 +149,7 @@ export function ProjectList({ projects, loading, onProjectSelect, onResume }: Pr
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-gray-600">Progress</span>
                   <span className="font-medium">
-                    {project.completed_blogs}/{project.total_blogs} blogs
+                    {project.completed_blogs}/{project.num_blogs} blogs
                   </span>
                 </div>
                 <Progress value={progressPercentage} className="h-2" />

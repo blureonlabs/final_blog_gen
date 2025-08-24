@@ -38,6 +38,8 @@ export function Dashboard({ user }: DashboardProps) {
     const loadData = async () => {
       try {
         const data = await supabaseApi.getUserData()
+        console.log("🚀 Initial user data loaded:", data)
+        console.log("🔍 Initial projects num_blogs:", data.projects.map(p => ({ id: p.id, name: p.name, num_blogs: p.num_blogs })))
         setUserData(data)
       } catch (error) {
         console.error("Error loading user data:", error)
@@ -61,10 +63,17 @@ export function Dashboard({ user }: DashboardProps) {
 
   const handleProjectSelect = (projectId: string) => {
     const project = userData?.projects.find(p => p.id === projectId)
+    console.log("🔍 Selected project:", project)
+    console.log("🔍 Project num_blogs:", project?.num_blogs)
+    console.log("🔍 Project ID from parameter:", projectId)
+    console.log("🔍 Project ID from object:", project?.id)
+    console.log("🔍 All projects in userData:", userData?.projects.map(p => ({ id: p.id, name: p.name, num_blogs: p.num_blogs })))
     if (project) {
       setSelectedProjectId(projectId)
       setSelectedProject(project)
       setActiveView("project")
+      console.log("🔍 Set selectedProjectId to:", projectId)
+      console.log("🔍 Set selectedProject to:", project)
     }
   }
 
@@ -74,8 +83,12 @@ export function Dashboard({ user }: DashboardProps) {
   }
 
   const handleProjectCreated = async (newProject: Project) => {
+    console.log("🆕 New project created:", newProject)
+    console.log("🔍 New project num_blogs:", newProject.num_blogs)
+    
     if (userData) {
       const updatedData = { ...userData, projects: [...userData.projects, newProject] }
+      console.log("🔄 Updated userData projects:", updatedData.projects.map(p => ({ id: p.id, name: p.name, num_blogs: p.num_blogs })))
       setUserData(updatedData)
       // Log project creation - this is a major event
       supabaseLogger.info("generation", "User created new project", { 
@@ -88,6 +101,8 @@ export function Dashboard({ user }: DashboardProps) {
 
   const handleDataUpdate = async () => {
     const updatedData = await supabaseApi.getUserData()
+    console.log("🔄 Dashboard data updated:", updatedData)
+    console.log("🔍 Projects num_blogs:", updatedData.projects.map(p => ({ id: p.id, name: p.name, num_blogs: p.num_blogs })))
     setUserData(updatedData)
     // No need to log data refresh
   }
@@ -282,12 +297,18 @@ export function Dashboard({ user }: DashboardProps) {
         )}
 
         {activeView === "project" && selectedProjectId && selectedProject && (
-          <ProjectDetail
-            projectId={selectedProjectId}
-            project={selectedProject}
-            onBack={() => setActiveView("dashboard")}
-            onUpdate={handleDataUpdate}
-          />
+          <>
+            {console.log("🔍 Rendering ProjectDetail with:")}
+            {console.log("🔍 selectedProjectId:", selectedProjectId)}
+            {console.log("🔍 selectedProject.id:", selectedProject.id)}
+            {console.log("🔍 selectedProject:", selectedProject)}
+            <ProjectDetail
+              projectId={selectedProjectId}
+              project={selectedProject}
+              onBack={() => setActiveView("dashboard")}
+              onUpdate={handleDataUpdate}
+            />
+          </>
         )}
 
         {activeView === "projects" && (

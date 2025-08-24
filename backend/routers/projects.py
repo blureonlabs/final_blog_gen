@@ -234,7 +234,7 @@ async def get_project_status(
             status=project["status"],
             progress=progress,
             blogs_generated=blogs_generated,
-            total_blogs=project["num_blogs"],
+            num_blogs=project["num_blogs"],
             created_at=project["created_at"],
             updated_at=project["updated_at"]
         )

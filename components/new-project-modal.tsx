@@ -219,9 +219,9 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
       const newProject = await supabaseApi.addProject({
         name: name.trim(),
         description: description.trim(),
-        total_blogs: numBlogs,
+        num_blogs: numBlogs,
         completed_blogs: 0,
-        status: "in_progress",
+        status: "ready",
         wordpress_account_id: selectedWPAccount?.id || (isDemoMode ? "demo-wp-account" : ""),
         api_keys: {
           openai: selectedOpenAI?.id || (isDemoMode ? "demo-openai-key" : ""),

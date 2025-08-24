@@ -102,8 +102,7 @@ class AIClient:
         """
         
         try:
-            response = await asyncio.to_thread(
-                self.openai_client.ChatCompletion.create,
+            response = await self.openai_client.ChatCompletion.acreate(
                 model=model,
                 messages=[
                     {"role": "system", "content": "You are an expert content writer specializing in creating engaging, SEO-optimized blog posts."},
@@ -171,8 +170,7 @@ class AIClient:
         """
         
         try:
-            response = await asyncio.to_thread(
-                self.gemini_client.generate_content,
+            response = await self.gemini_client.generate_content(
                 enhanced_prompt,
                 generation_config=genai.types.GenerationConfig(
                     temperature=kwargs.get('temperature', 0.7),

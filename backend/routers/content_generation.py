@@ -15,6 +15,7 @@ from core.ai_client import ai_client
 from core.supabase_client import supabase_client
 from core.auth import get_current_user
 from tasks.content_generation import generate_blogs_task
+from services.blog_generation_service import blog_generation_service
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ async def generate_blogs(
     """
     try:
         # Validate project exists and belongs to user
-        project_response = await supabase.table("projects").select("*").eq("id", str(request.project_id)).eq("user_id", str(current_user["id"])).execute()
+        project_response = supabase.table("projects").select("*").eq("id", str(request.project_id)).eq("user_id", str(current_user["id"])).execute()
         
         if not project_response.data:
             raise HTTPException(status_code=404, detail="Project not found or access denied")
@@ -64,13 +65,13 @@ async def generate_blogs(
         )
         
         # Update project status
-        await supabase.table("projects").update({
+        supabase.table("projects").update({
             "status": "generating",
             "updated_at": "now()"
         }).eq("id", str(request.project_id)).execute()
         
         # Log the generation request
-        await supabase.table("logs").insert({
+        supabase.table("logs").insert({
             "project_id": str(request.project_id),
             "message": f"Started generating {request.num_blogs} blogs using {request.ai_model}",
             "timestamp": "now()"
@@ -91,6 +92,88 @@ async def generate_blogs(
         logger.error(f"Error starting blog generation: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+@router.post("/generate-direct", response_model=BlogGenerationResponse)
+async def generate_blogs_direct(
+    request: BlogGenerationRequest,
+    supabase = Depends(lambda: supabase_client)
+):
+    """
+    Generate blogs directly using the blog generation service
+    
+    This endpoint generates blogs immediately without background tasks.
+    Useful for testing and small batches.
+    """
+    try:
+        # Validate project exists (no user authentication required for demo)
+        project_response = supabase.table("projects").select("*").eq("id", str(request.project_id)).execute()
+        
+        if not project_response.data:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        project = project_response.data[0]
+        
+        # Get project details for blog generation
+        project_description = project.get("description", "Blog content generation")
+        project_api_keys = project.get("api_keys", {})
+        
+        # Check if project has required API keys
+        if not project_api_keys.get("openai") and not project_api_keys.get("gemini"):
+            raise HTTPException(
+                status_code=400, 
+                detail="Project must have OpenAI or Gemini API keys configured"
+            )
+        
+        # Update project status to generating
+        supabase.table("projects").update({
+            "status": "generating",
+            "updated_at": "now()"
+        }).eq("id", str(request.project_id)).execute()
+        
+        # Generate blogs using the service with project details and API keys
+        generated_blogs = await blog_generation_service.generate_blogs_for_project(
+            project_id=str(request.project_id),
+            project_description=project_description,
+            num_blogs=request.num_blogs,
+            ai_model=request.ai_model,
+            project_api_keys=project_api_keys
+        )
+        
+        # Update project status and completed blogs count
+        supabase.table("projects").update({
+            "status": "completed",
+            "completed_blogs": len(generated_blogs),
+            "updated_at": "now()"
+        }).eq("id", str(request.project_id)).execute()
+        
+        # Log the generation completion
+        # TODO: Create logs table or use alternative logging
+        # supabase.table("logs").insert({
+        #     "project_id": str(request.project_id),
+        #     "level": "info",
+        #     "category": "generation",
+        #     "message": f"Generated {len(generated_blogs)} blogs successfully using {request.ai_model}",
+        #     "metadata": {
+        #         "ai_model": request.ai_model,
+        #         "blogs_generated": len(generated_blogs),
+        #         "project_description": project_description
+        #     }
+        # }).execute()
+        
+        return BlogGenerationResponse(
+            project_id=request.project_id,
+            task_id=f"direct_gen_{request.project_id}",
+            message=f"Successfully generated {len(generated_blogs)} blogs",
+            estimated_time=0,  # Already completed
+            blogs_requested=request.num_blogs,
+            batch_size=request.num_blogs
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in direct blog generation: {e}")
+        raise HTTPException(status_code=500, detail=f"Blog generation failed: {str(e)}")
+
 @router.get("/blogs/{project_id}", response_model=BlogListResponse)
 async def get_project_blogs(
     project_id: UUID,
@@ -104,7 +187,7 @@ async def get_project_blogs(
     """
     try:
         # Validate project access
-        project_response = await supabase.table("projects").select("*").eq("id", str(project_id)).eq("user_id", str(current_user["id"])).execute()
+        project_response = supabase.table("projects").select("*").eq("id", str(project_id)).eq("user_id", str(current_user["id"])).execute()
         
         if not project_response.data:
             raise HTTPException(status_code=404, detail="Project not found or access denied")
@@ -113,10 +196,10 @@ async def get_project_blogs(
         offset = (page - 1) * per_page
         
         # Get blogs with pagination
-        blogs_response = await supabase.table("blogs").select("*").eq("project_id", str(project_id)).range(offset, offset + per_page - 1).order("created_at", desc=True).execute()
+        blogs_response = supabase.table("blogs").select("*").eq("project_id", str(project_id)).range(offset, offset + per_page - 1).order("created_at", desc=True).execute()
         
         # Get total count
-        count_response = await supabase.table("blogs").select("id", count="exact").eq("project_id", str(project_id)).execute()
+        count_response = supabase.table("blogs").select("id", count="exact").eq("project_id", str(project_id)).execute()
         total = count_response.count or 0
         
         blogs = []
@@ -159,24 +242,43 @@ async def get_blog(
     supabase = Depends(lambda: supabase_client)
 ):
     """
-    Get a specific blog by ID
+    Get a specific blog by ID with content from storage
     """
     try:
         # Get blog with project info to validate access
-        blog_response = await supabase.table("blogs").select("*, projects!inner(*)").eq("id", str(blog_id)).eq("projects.user_id", str(current_user["id"])).execute()
+        blog_response = supabase.table("blogs").select("*, projects!inner(*)").eq("id", str(blog_id)).eq("projects.user_id", str(current_user["id"])).execute()
         
         if not blog_response.data:
             raise HTTPException(status_code=404, detail="Blog not found or access denied")
         
         blog = blog_response.data[0]
         
+        # Retrieve content from storage
+        try:
+            content_data = await blog_generation_service.get_blog_content(
+                storage_path=blog["storage_path"],
+                bucket_name=blog.get("storage_bucket", "blog-content")
+            )
+            
+            # Extract content from storage data
+            content = content_data.get("content", "")
+            prompt = content_data.get("prompt", blog.get("prompt", ""))
+            ai_model = content_data.get("ai_model", blog.get("ai_model", ""))
+            
+        except Exception as storage_error:
+            logger.warning(f"Could not retrieve content from storage: {storage_error}")
+            # Fallback to metadata only
+            content = ""
+            prompt = blog.get("prompt", "")
+            ai_model = blog.get("ai_model", "")
+        
         return BlogResponse(
             id=blog["id"],
             project_id=blog["project_id"],
             title=blog.get("title"),
-            content=blog.get("content"),
-            prompt=blog["prompt"],
-            ai_model=blog["ai_model"],
+            content=content,
+            prompt=prompt,
+            ai_model=ai_model,
             ai_model_version=blog.get("ai_model_version"),
             seo_meta=blog.get("seo_meta"),
             status=blog["status"],
@@ -205,7 +307,7 @@ async def get_blog_preview(
     """
     try:
         # Get blog with project info to validate access
-        blog_response = await supabase.table("blogs").select("*, projects!inner(*)").eq("id", str(blog_id)).eq("projects.user_id", str(current_user["id"])).execute()
+        blog_response = supabase.table("blogs").select("*, projects!inner(*)").eq("id", str(blog_id)).eq("projects.user_id", str(current_user["id"])).execute()
         
         if not blog_response.data:
             raise HTTPException(status_code=404, detail="Blog not found or access denied")
@@ -260,7 +362,7 @@ async def get_generation_status(
     """
     try:
         # Validate project access
-        project_response = await supabase.table("projects").select("*").eq("id", str(project_id)).eq("user_id", str(current_user["id"])).execute()
+        project_response = supabase.table("projects").select("*").eq("id", str(project_id)).eq("user_id", str(current_user["id"])).execute()
         
         if not project_response.data:
             raise HTTPException(status_code=404, detail="Project not found or access denied")
@@ -268,7 +370,7 @@ async def get_generation_status(
         project = project_response.data[0]
         
         # Get blog counts by status
-        blogs_response = await supabase.table("blogs").select("status").eq("project_id", str(project_id)).execute()
+        blogs_response = supabase.table("blogs").select("status").eq("project_id", str(project_id)).execute()
         
         status_counts = {}
         total_blogs = 0
@@ -287,7 +389,7 @@ async def get_generation_status(
         return {
             "project_id": str(project_id),
             "project_name": project["name"],
-            "total_blogs_requested": project["num_blogs"],
+            "num_blogs_requested": project["num_blogs"],
             "blogs_generated": total_blogs,
             "progress_percentage": progress,
             "status_breakdown": status_counts,
