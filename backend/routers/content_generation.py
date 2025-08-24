@@ -285,7 +285,7 @@ async def get_blog(
     supabase = Depends(lambda: supabase_client)
 ):
     """
-    Get a specific blog by ID with content from storage
+    Get a specific blog by ID with content from storage (requires authentication)
     """
     try:
         # Get blog with project info to validate access
@@ -298,7 +298,67 @@ async def get_blog(
         
         # Retrieve content from storage
         try:
-            content_data = await blog_generation_service.get_blog_content(
+            content_data = blog_generation_service.get_blog_content(
+                storage_path=blog["storage_path"],
+                bucket_name=blog.get("storage_bucket", "blog-content")
+            )
+            
+            # Extract content from storage data
+            content = content_data.get("content", "")
+            prompt = content_data.get("prompt", blog.get("prompt", ""))
+            ai_model = content_data.get("ai_model", blog.get("ai_model", ""))
+            
+        except Exception as storage_error:
+            logger.warning(f"Could not retrieve content from storage: {storage_error}")
+            # Fallback to metadata only
+            content = ""
+            prompt = blog.get("prompt", "")
+            ai_model = blog.get("ai_model", "")
+        
+        return BlogResponse(
+            id=blog["id"],
+            project_id=blog["project_id"],
+            title=blog.get("title"),
+            content=content,
+            prompt=prompt,
+            ai_model=ai_model,
+            ai_model_version=blog.get("ai_model_version"),
+            seo_meta=blog.get("seo_meta"),
+            status=blog["status"],
+            wordpress_url=blog.get("wordpress_url"),
+            wordpress_post_id=blog.get("wordpress_post_id"),
+            error_message=blog.get("error_message"),
+            generation_logs=blog.get("generation_logs"),
+            created_at=blog["created_at"],
+            updated_at=blog["updated_at"]
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching blog: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.get("/blog/{blog_id}/public", response_model=BlogResponse)
+async def get_blog_public(
+    blog_id: UUID,
+    supabase = Depends(lambda: supabase_client)
+):
+    """
+    Get a specific blog by ID with content from storage (public access, no authentication required)
+    """
+    try:
+        # Get blog without user validation (public access)
+        blog_response = supabase.table("blogs").select("*").eq("id", str(blog_id)).execute()
+        
+        if not blog_response.data:
+            raise HTTPException(status_code=404, detail="Blog not found")
+        
+        blog = blog_response.data[0]
+        
+        # Retrieve content from storage
+        try:
+            content_data = blog_generation_service.get_blog_content(
                 storage_path=blog["storage_path"],
                 bucket_name=blog.get("storage_bucket", "blog-content")
             )

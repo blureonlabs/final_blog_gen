@@ -543,17 +543,27 @@ class BlogGenerationService:
             logger.warning(f"⚠️ Could not ensure bucket exists: {e}")
             # Continue anyway, bucket might already exist
 
-    async def get_blog_content(self, storage_path: str, bucket_name: str = None) -> Dict[str, Any]:
+    def get_blog_content(self, storage_path: str, bucket_name: str = None) -> Dict[str, Any]:
         """Retrieve blog content from S3 or database"""
         try:
+            logger.info(f"🔍 get_blog_content called with storage_path: {storage_path}, bucket_name: {bucket_name}")
+            
             # If it's an S3 storage path, retrieve from S3
             if bucket_name == "s3-blog-content" or storage_path.startswith("blogs/"):
                 logger.info(f"🔍 Retrieving content from S3: {storage_path}")
-                content_data = await self.s3_storage.retrieve_blog_content(storage_path)
-                if content_data:
-                    return content_data
-                else:
-                    raise Exception(f"Failed to retrieve content from S3: {storage_path}")
+                try:
+                    content_data = self.s3_storage.retrieve_blog_content(storage_path)
+                    logger.info(f"🔍 S3 retrieval result: {content_data}")
+                    if content_data:
+                        return content_data
+                    else:
+                        logger.warning(f"⚠️ S3 returned empty content for: {storage_path}")
+                        raise Exception(f"Failed to retrieve content from S3: {storage_path}")
+                except Exception as s3_error:
+                    logger.error(f"❌ S3 retrieval failed: {s3_error}")
+                    # Fall back to database content if available
+                    logger.info("🔄 Falling back to database content...")
+                    return {"content": "S3 content retrieval failed, using database fallback", "storage_type": "database_fallback", "error": str(s3_error)}
             
             # If it's a database fallback, return None (content is in database)
             elif bucket_name == "database":

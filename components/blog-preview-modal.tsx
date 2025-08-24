@@ -36,14 +36,14 @@ export function BlogPreviewModal({ blog, onClose }: BlogPreviewModalProps) {
       // If we already have content, don't fetch again
       if (blogContent) return
       
-      // If blog is not ready, don't fetch
-      if (blog.status !== "ready") return
+             // Fetch content regardless of status for preview purposes
+       // if (blog.status !== "ready") return
       
       setIsLoadingContent(true)
       setContentError(null)
       
       try {
-        const response = await fetch(`http://localhost:8000/api/content-generation/blog/${blog.id}`)
+        const response = await fetch(`http://localhost:8000/api/content-generation/blog/${blog.id}/public`)
         if (response.ok) {
           const blogData = await response.json()
           setBlogContent(blogData.content || "No content available")

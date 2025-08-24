@@ -63,8 +63,12 @@ class S3StorageService:
     def retrieve_blog_content(self, storage_path: str) -> Optional[Dict[str, Any]]:
         """Retrieve blog content from S3 bucket"""
         try:
+            logger.info(f"🔍 S3StorageService.retrieve_blog_content called with: {storage_path}")
             if not self.s3_client:
+                logger.error("❌ S3 client not initialized")
                 raise Exception("S3 client not initialized")
+            
+            logger.info(f"🔍 Attempting to retrieve from bucket: {self.bucket_name}, key: {storage_path}")
             
             # Download content from S3
             response = self.s3_client.get_object(
@@ -72,10 +76,16 @@ class S3StorageService:
                 Key=storage_path
             )
             
+            logger.info(f"🔍 S3 get_object response: {response}")
+            
             if response:
                 content = response['Body'].read().decode('utf-8')
+                logger.info(f"🔍 Raw S3 content length: {len(content)} characters")
+                logger.info(f"🔍 Raw S3 content preview: {content[:200]}...")
+                
                 content_data = json.loads(content)
                 logger.info(f"✅ Successfully retrieved blog content from S3: {storage_path}")
+                logger.info(f"🔍 Parsed content data keys: {list(content_data.keys())}")
                 return content_data
             else:
                 logger.warning(f"⚠️ No content found for storage path: {storage_path}")
@@ -83,6 +93,9 @@ class S3StorageService:
                 
         except Exception as e:
             logger.error(f"❌ Error retrieving blog content from S3: {e}")
+            logger.error(f"❌ Error type: {type(e)}")
+            import traceback
+            logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             return None
     
     def delete_blog_content(self, storage_path: str) -> bool:
