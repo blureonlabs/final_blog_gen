@@ -114,21 +114,46 @@ async def generate_blogs_direct(
         
         # Get project details for blog generation
         project_description = project.get("description", "Blog content generation")
-        project_api_keys = project.get("api_keys", {})
+        user_id = project.get("user_id")
+        
+        # Fetch API keys from the api_keys table for the user
+        api_keys_response = supabase.table("api_keys").select("*").eq("user_id", str(user_id)).eq("is_active", True).execute()
+        
+        if not api_keys_response.data:
+            logger.error(f"❌ No active API keys found for user {user_id}")
+            raise HTTPException(
+                status_code=400, 
+                detail="No active API keys found. Please configure your API keys first."
+            )
+        
+        # Organize API keys by service
+        project_api_keys = {}
+        for key_record in api_keys_response.data:
+            service = key_record.get("service")
+            api_key = key_record.get("api_key")
+            if service and api_key:
+                project_api_keys[service] = api_key
         
         # Add detailed logging for debugging
         logger.info(f"🔍 Project data: {project}")
-        logger.info(f"🔍 Project API keys: {project_api_keys}")
+        logger.info(f"🔍 User ID: {user_id}")
+        logger.info(f"🔍 Fetched API keys: {list(project_api_keys.keys())}")
         logger.info(f"🔍 Project description: {project_description}")
         logger.info(f"🔍 AI model requested: {request.ai_model}")
         logger.info(f"🔍 Number of blogs requested: {request.num_blogs}")
         
-        # Check if project has required API keys
-        if not project_api_keys.get("openai") and not project_api_keys.get("gemini"):
-            logger.error(f"❌ No API keys found in project: {project_api_keys}")
+        # Check if user has required API keys for the requested model
+        if request.ai_model == "openai" and not project_api_keys.get("openai"):
+            logger.error(f"❌ No OpenAI API key found for user {user_id}")
             raise HTTPException(
                 status_code=400, 
-                detail="Project must have OpenAI or Gemini API keys configured"
+                detail="OpenAI API key not configured. Please add your OpenAI API key first."
+            )
+        elif request.ai_model == "gemini" and not project_api_keys.get("gemini"):
+            logger.error(f"❌ No Gemini API key found for user {user_id}")
+            raise HTTPException(
+                status_code=400, 
+                detail="Gemini API key not configured. Please add your Gemini API key first."
             )
         
         logger.info(f"✅ API keys found: OpenAI={bool(project_api_keys.get('openai'))}, Gemini={bool(project_api_keys.get('gemini'))}")

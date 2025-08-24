@@ -395,10 +395,17 @@ export function Dashboard({ user }: DashboardProps) {
       {showNewProject && userData && (
         <NewProjectModal
           onClose={() => setShowNewProject(false)}
-          onSuccess={(newProject) => {
+          onSuccess={async (newProject) => {
             setShowNewProject(false)
-            // Refresh user data
-            handleDataUpdate()
+            // Immediately add the new project to local state
+            setUserData(prev => ({
+              ...prev,
+              projects: [newProject, ...prev.projects]
+            }))
+            // Also refresh from database to ensure consistency
+            setTimeout(async () => {
+              await handleDataUpdate()
+            }, 100)
           }}
           userId={user.id}
           userData={userData}

@@ -1,5 +1,5 @@
 import openai
-import google.generativeai as genai
+# import google.generativeai as genai  # Disabled Gemini
 from typing import Dict, Any, Optional, List
 import asyncio
 import logging
@@ -25,12 +25,14 @@ class AIClient:
             else:
                 logger.warning("OpenAI API key not found")
                 
-            if settings.GEMINI_API_KEY:
-                genai.configure(api_key=settings.GEMINI_API_KEY)
-                self.gemini_client = genai.GenerativeModel('gemini-pro')
-                logger.info("Gemini client initialized successfully")
-            else:
-                logger.warning("Gemini API key not found")
+            # Gemini disabled - using OpenAI only
+            # if settings.GEMINI_API_KEY:
+            #     genai.configure(api_key=settings.GEMINI_API_KEY)
+            #     self.gemini_client = genai.GenerativeModel('gemini-pro')
+            #     logger.info("Gemini client initialized successfully")
+            # else:
+            #     logger.warning("Gemini API key not found")
+            logger.info("Gemini client disabled - using OpenAI only")
                 
         except Exception as e:
             logger.error(f"Error initializing AI clients: {e}")
@@ -58,7 +60,8 @@ class AIClient:
             if ai_model.lower() == "openai":
                 return await self._generate_with_openai(prompt, ai_model_version, **kwargs)
             elif ai_model.lower() == "gemini":
-                return await self._generate_with_gemini(prompt, **kwargs)
+                logger.warning("Gemini is disabled - falling back to OpenAI")
+                return await self._generate_with_openai(prompt, ai_model_version, **kwargs)
             else:
                 raise ValueError(f"Unsupported AI model: {ai_model}")
                 
@@ -138,70 +141,71 @@ class AIClient:
             logger.error(f"OpenAI API error: {e}")
             raise
     
-    async def _generate_with_gemini(
-        self, 
-        prompt: str, 
-        **kwargs
-    ) -> Dict[str, Any]:
-        """Generate blog draft using Gemini API"""
-        if not self.gemini_client:
-            raise RuntimeError("Gemini client not initialized")
-        
-        # Enhanced prompt for Gemini
-        enhanced_prompt = f"""
-        Write a comprehensive, engaging blog post based on the following topic:
-        
-        TOPIC: {prompt}
-        
-        Requirements:
-        - Write in a professional, engaging tone
-        - Include an attention-grabbing headline
-        - Structure with clear headings and subheadings
-        - Include introduction, main content sections, and conclusion
-        - Aim for 800-1200 words
-        - Use bullet points and numbered lists where appropriate
-        - Include a call-to-action at the end
-        - Make it SEO-friendly with natural keyword usage
-        
-        Format the response as:
-        TITLE: [Your blog title here]
-        
-        [Your blog content here with proper formatting]
-        """
-        
-        try:
-            response = await self.gemini_client.generate_content(
-                enhanced_prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=kwargs.get('temperature', 0.7),
-                    top_p=kwargs.get('top_p', 1.0),
-                    top_k=kwargs.get('top_k', 40),
-                    max_output_tokens=kwargs.get('max_tokens', 2000)
-                )
-            )
-            
-            content = response.text
-            
-            # Extract title and content
-            title = ""
-            blog_content = content
-            
-            if "TITLE:" in content:
-                title_part, content_part = content.split("TITLE:", 1)
-                title = title_part.strip()
-                blog_content = content_part.strip()
-            
-            return {
-                "title": title or f"Blog about {prompt}",
-                "content": blog_content,
-                "model": "gemini-pro",
-                "tokens_used": len(content.split()),  # Approximate token count
-                "model_provider": "gemini"
-            }
-            
-        except Exception as e:
-            logger.error(f"Gemini API error: {e}")
-            raise
+    # Gemini generation method disabled
+    # async def _generate_with_gemini(
+    #     self, 
+    #     prompt: str, 
+    #     **kwargs
+    # ) -> Dict[str, Any]:
+    #     """Generate blog draft using Gemini API"""
+    #     if not self.gemini_client:
+    #         raise RuntimeError("Gemini client not initialized")
+    #     
+    #     # Enhanced prompt for Gemini
+    #     enhanced_prompt = f"""
+    #     Write a comprehensive, engaging blog post based on the following topic:
+    #     
+    #     TOPIC: {prompt}
+    #     
+    #     Requirements:
+    #     - Write in a professional, engaging tone
+    #     - Include an attention-grabbing headline
+    #     - Structure with clear headings and subheadings
+    #     - Include introduction, main content sections, and conclusion
+    #     - Aim for 800-1200 words
+    #     - Use bullet points and numbered lists where appropriate
+    #     - Include a call-to-action at the end
+    #     - Make it SEO-friendly with natural keyword usage
+    #     
+    #     Format the response as:
+    #     TITLE: [Your blog title here]
+    #     
+    #     [Your blog content here with proper formatting]
+    #     """
+    #     
+    #     try:
+    #         response = await self.gemini_client.generate_content(
+    #             enhanced_prompt,
+    #             generation_config=genai.types.GenerationConfig(
+    #                 temperature=kwargs.get('temperature', 0.7),
+    #                 top_p=kwargs.get('top_p', 1.0),
+    #                 top_k=kwargs.get('top_k', 40),
+    #                 max_output_tokens=kwargs.get('max_tokens', 2000)
+    #             )
+    #         )
+    #         
+    #         content = response.text
+    #         
+    #         # Extract title and content
+    #         title = ""
+    #         blog_content = content
+    #         
+    #         if "TITLE:" in content:
+    #             title_part, content_part = content.split("TITLE:", 1)
+    #             title = title_part.strip()
+    #             blog_content = content_part.strip()
+    #         
+    #         return {
+    #             "title": title or f"Blog about {prompt}",
+    #             "content": blog_content,
+    #             "model": "gemini-pro",
+    #             "tokens_used": len(content.split()),  # Approximate token count
+    #             "model_provider": "gemini"
+    #     }
+    #         
+    #     except Exception as e:
+    #         logger.error(f"Gemini API error: {e}")
+    #         raise
     
     async def generate_multiple_blogs(
         self,
@@ -254,14 +258,13 @@ class AIClient:
         """Get available AI models for each provider"""
         models = {
             "openai": ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-3.5-turbo-16k"],
-            "gemini": ["gemini-pro", "gemini-pro-vision"]
+            "gemini": []  # Gemini disabled
         }
         
         # Filter based on available clients
         if not self.openai_client:
             models["openai"] = []
-        if not self.gemini_client:
-            models["gemini"] = []
+        # Gemini is always disabled now
             
         return models
     
@@ -270,7 +273,7 @@ class AIClient:
         if ai_model.lower() == "openai":
             return self.openai_client is not None
         elif ai_model.lower() == "gemini":
-            return self.gemini_client is not None
+            return False  # Gemini is disabled
         return False
 
 # Create global AI client instance

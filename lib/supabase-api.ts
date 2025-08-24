@@ -6,7 +6,7 @@ export interface Project {
   id: string
   name: string
   description: string
-  num_blogs: number
+  total_blogs: number
   completed_blogs: number
   status: "pending" | "in_progress" | "completed" | "failed" | "ready"
   wordpress_account_id?: string
@@ -557,7 +557,7 @@ class SupabaseAPI {
       console.log('🔍 Adding project to Supabase:', projectData)
       
       const { data, error } = await supabase
-        .table('projects')
+        .from('projects')
         .insert(projectData)
         .select()
         .single()

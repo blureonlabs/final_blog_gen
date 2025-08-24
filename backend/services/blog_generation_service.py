@@ -9,6 +9,7 @@ import google.generativeai as genai
 from core.config import settings
 from core.supabase_client import supabase_client
 from models.blog import BlogCreate, BlogStatus
+from services.s3_storage_service import S3StorageService
 
 logger = logging.getLogger(__name__)
 
@@ -16,30 +17,18 @@ class BlogGenerationService:
     def __init__(self):
         self.openai_client = None
         self.gemini_client = None
+        self.s3_storage = S3StorageService()
         self._initialize_clients()
     
     def _initialize_clients(self):
-        """Initialize OpenAI and Gemini clients"""
+        """Initialize OpenAI and Gemini clients - now using project-specific keys"""
         try:
-            if settings.OPENAI_API_KEY:
-                openai.api_key = settings.OPENAI_API_KEY
-                self.openai_client = openai
-                logger.info("✅ OpenAI client initialized")
-            else:
-                logger.warning("⚠️ OpenAI API key not configured")
+            # Don't initialize global clients - we'll use project-specific keys
+            logger.info("✅ BlogGenerationService initialized - will use project-specific API keys")
+            self.openai_client = None  # Will be created per-request with project API key
+            self.gemini_client = None  # Will be created per-request with project API key
         except Exception as e:
-            logger.error(f"❌ Failed to initialize OpenAI client: {e}")
-        
-        # Temporarily disable Gemini to get server running
-        try:
-            if settings.GEMINI_API_KEY:
-                logger.info("⚠️ Gemini client temporarily disabled - using OpenAI only")
-                self.gemini_client = None
-            else:
-                logger.warning("⚠️ Gemini API key not configured")
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize Gemini client: {e}")
-            logger.warning("⚠️ Gemini client not available, but OpenAI can still be used")
+            logger.error(f"❌ Failed to initialize BlogGenerationService: {e}")
     
     async def generate_blog_content(
         self, 
@@ -55,33 +44,25 @@ class BlogGenerationService:
             logger.info(f"🔍 Project API keys: {project_api_keys}")
             logger.info(f"🔍 Project description: {project_description}")
             
-            # Use project API keys if provided, otherwise fall back to global settings
+            # Use project API keys - no fallback to global settings
             if ai_model == "openai":
                 logger.info(f"🔍 Using OpenAI model")
                 if project_api_keys and project_api_keys.get("openai"):
                     logger.info(f"✅ Using project-specific OpenAI key")
                     # Use project-specific OpenAI key
-                    return await self._generate_with_openai(project_description, blog_number, project_api_keys["openai"])
-                elif self.openai_client:
-                    logger.info(f"⚠️ Using global OpenAI client (no project API key)")
-                    # Use global OpenAI client
-                    return await self._generate_with_openai(project_description, blog_number)
+                    return self._generate_with_openai(project_description, blog_number, project_api_keys["openai"])
                 else:
-                    logger.error(f"❌ No OpenAI API key available")
-                    raise ValueError("OpenAI API key not configured for this project or globally")
+                    logger.error(f"❌ No OpenAI API key found in project")
+                    raise ValueError("OpenAI API key not configured for this project")
             elif ai_model == "gemini":
                 logger.info(f"🔍 Using Gemini model")
                 if project_api_keys and project_api_keys.get("gemini"):
                     logger.info(f"✅ Using project-specific Gemini key")
                     # Use project-specific Gemini key
-                    return await self._generate_with_gemini(project_description, blog_number, project_api_keys["gemini"])
-                elif self.gemini_client:
-                    logger.info(f"⚠️ Using global Gemini client (no project API key)")
-                    # Use global Gemini client
-                    return await self._generate_with_gemini(project_description, blog_number)
+                    return self._generate_with_gemini(project_description, blog_number, project_api_keys["gemini"])
                 else:
-                    logger.error(f"❌ No Gemini API key available")
-                    raise ValueError("Gemini API key not configured for this project or globally")
+                    logger.error(f"❌ No Gemini API key found in project")
+                    raise ValueError("Gemini API key not configured for this project")
             else:
                 logger.error(f"❌ Unsupported AI model: {ai_model}")
                 raise ValueError(f"AI model '{ai_model}' not supported")
@@ -92,22 +73,21 @@ class BlogGenerationService:
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             raise
     
-    async def _generate_with_openai(self, project_description: str, blog_number: int, api_key: str = None) -> Dict[str, Any]:
-        """Generate blog content using OpenAI"""
+    def _generate_with_openai(self, project_description: str, blog_number: int, api_key: str) -> Dict[str, Any]:
+        """Generate blog content using OpenAI with project-specific API key"""
         try:
             logger.info(f"🔍 Starting OpenAI generation for blog {blog_number}")
             logger.info(f"🔍 API key provided: {bool(api_key)}")
             logger.info(f"🔍 Project description: {project_description}")
             
-            # Use provided API key or fall back to global client
-            if api_key:
-                logger.info(f"✅ Using provided API key")
-                import openai
-                openai.api_key = api_key
-                client = openai
-            else:
-                logger.info(f"⚠️ Using global OpenAI client")
-                client = self.openai_client
+            # Always require API key - no fallback to global client
+            if not api_key:
+                logger.error(f"❌ No OpenAI API key provided")
+                raise ValueError("OpenAI API key is required")
+            
+            logger.info(f"✅ Using project-specific OpenAI API key")
+            import openai
+            openai.api_key = api_key
             
             prompt = f"""
             Create a comprehensive blog post about: {project_description}
@@ -129,7 +109,8 @@ class BlogGenerationService:
             
             logger.info(f"📝 Sending prompt to OpenAI: {prompt[:100]}...")
             
-            response = await client.ChatCompletion.acreate(
+            # Use the older OpenAI API syntax for Python 3.8 compatibility
+            response = openai.ChatCompletion.create(
                 model="gpt-4",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=2000,
@@ -164,30 +145,26 @@ class BlogGenerationService:
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             raise
     
-    async def _generate_with_gemini(self, project_description: str, blog_number: int, api_key: str = None) -> Dict[str, Any]:
-        """Generate blog content using Gemini"""
+    def _generate_with_gemini(self, project_description: str, blog_number: int, api_key: str) -> Dict[str, Any]:
+        """Generate blog content using Gemini with project-specific API key"""
         try:
             logger.info(f"🔍 Starting Gemini generation for blog {blog_number}")
             logger.info(f"🔍 API key provided: {bool(api_key)}")
             logger.info(f"🔍 Project description: {project_description}")
             
-            # Check if Gemini is available
-            if not self.gemini_client and not api_key:
-                raise ValueError("Gemini client not available. Please use OpenAI instead.")
+            # Always require API key - no fallback to global client
+            if not api_key:
+                logger.error(f"❌ No Gemini API key provided")
+                raise ValueError("Gemini API key is required")
             
-            # Use provided API key or fall back to global client
-            if api_key:
-                logger.info(f"✅ Using provided API key")
-                try:
-                    import google.generativeai as genai
-                    genai.configure(api_key=api_key)
-                    model = genai.GenerativeModel('gemini-1.5-pro')
-                except Exception as e:
-                    logger.error(f"❌ Failed to initialize Gemini with provided key: {e}")
-                    raise ValueError(f"Invalid Gemini API key: {e}")
-            else:
-                logger.info(f"⚠️ Using global Gemini client")
-                model = self.gemini_client
+            logger.info(f"✅ Using project-specific Gemini API key")
+            try:
+                import google.generativeai as genai
+                genai.configure(api_key=api_key)
+                model = genai.GenerativeModel('gemini-1.5-pro')
+            except Exception as e:
+                logger.error(f"❌ Failed to initialize Gemini with provided key: {e}")
+                raise ValueError(f"Invalid Gemini API key: {e}")
             
             prompt = f"""
             Create a comprehensive blog post about: {project_description}
@@ -209,7 +186,8 @@ class BlogGenerationService:
             
             logger.info(f"📝 Sending prompt to Gemini: {prompt[:100]}...")
             
-            response = await model.generate_content(prompt)
+            # Use synchronous call for Python 3.8 compatibility
+            response = model.generate_content(prompt)
             
             logger.info(f"✅ Gemini response received")
             
@@ -319,7 +297,7 @@ class BlogGenerationService:
                     blog_create = BlogCreate(
                         project_id=project_id,
                         title=blog_data["title"],
-                        status=BlogStatus.generating,  # Start with generating status
+                        status=BlogStatus.GENERATING,  # Start with generating status
                         word_count=blog_data["word_count"],
                         prompt=blog_data["prompt"],
                         ai_model=blog_data["ai_model"]
@@ -415,10 +393,13 @@ class BlogGenerationService:
             )
             
             if not storage_result:
-                logger.error(f"❌ Failed to store content in Supabase Storage")
-                raise Exception("Failed to store content in Supabase Storage")
-            
-            logger.info(f"✅ Content stored successfully in storage")
+                logger.warning(f"⚠️ Failed to store content in Supabase Storage, using database fallback")
+                # Store content directly in database as fallback
+                storage_path = f"database_fallback_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                bucket_name = "database"
+                logger.info(f"📝 Using database fallback for content storage")
+            else:
+                logger.info(f"✅ Content stored successfully in storage")
             
             # Calculate content size and hash
             content_bytes = len(content.encode('utf-8'))
@@ -441,11 +422,34 @@ class BlogGenerationService:
                 "updated_at": datetime.now().isoformat()
             }
             
+            # If using database fallback, add content directly
+            if bucket_name == "database":
+                blog_metadata["content"] = content
+                logger.info(f"📝 Using database fallback for content storage")
+            
             logger.info(f"📝 Blog metadata prepared: {blog_metadata}")
             logger.info(f"💾 Inserting blog metadata into database...")
             
             # Insert metadata into blogs table
-            result = supabase_client.table("blogs").insert(blog_metadata).execute()
+            try:
+                result = supabase_client.table("blogs").insert(blog_metadata).execute()
+                logger.info(f"✅ Database insert result: {result}")
+            except Exception as db_error:
+                logger.error(f"❌ Database insert failed: {db_error}")
+                # Try simplified insert without storage fields
+                simplified_metadata = {
+                    "project_id": project_id,
+                    "title": title,
+                    "status": status,
+                    "word_count": word_count,
+                    "prompt": prompt,
+                    "ai_model": ai_model,
+                    "content": content,  # Store content directly
+                    "created_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now().isoformat()
+                }
+                logger.info(f"📝 Trying simplified insert with content field")
+                result = supabase_client.table("blogs").insert(simplified_metadata).execute()
             
             if result.data:
                 logger.info(f"💾 Blog stored successfully: {title}")
@@ -509,6 +513,7 @@ class BlogGenerationService:
             logger.error(f"❌ Error type: {type(e)}")
             import traceback
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+            logger.warning(f"⚠️ Storage failed, will use database fallback")
             return False
     
     def _ensure_bucket_exists(self, bucket_name: str):
@@ -522,13 +527,21 @@ class BlogGenerationService:
             
             if bucket_name not in bucket_names:
                 # Create bucket with public access for blog content
-                supabase_client.storage.create_bucket(
-                    name=bucket_name,
-                    public=True,  # Make blog content publicly readable
-                    file_size_limit=52428800,  # 50MB limit
-                    allowed_mime_types=["application/json", "text/plain", "text/markdown"]
-                )
-                logger.info(f"✅ Created storage bucket: {bucket_name}")
+                try:
+                    supabase_client.storage.create_bucket(
+                        name=bucket_name,
+                        file_size_limit=52428800,  # 50MB limit
+                        allowed_mime_types=["application/json", "text/plain", "text/markdown"]
+                    )
+                    logger.info(f"✅ Created storage bucket: {bucket_name}")
+                except Exception as create_error:
+                    logger.warning(f"⚠️ Could not create bucket {bucket_name}: {create_error}")
+                    # Try to create without additional parameters
+                    try:
+                        supabase_client.storage.create_bucket(name=bucket_name)
+                        logger.info(f"✅ Created basic storage bucket: {bucket_name}")
+                    except Exception as basic_error:
+                        logger.warning(f"⚠️ Could not create basic bucket {bucket_name}: {basic_error}")
             
         except Exception as e:
             logger.warning(f"⚠️ Could not ensure bucket exists: {e}")
