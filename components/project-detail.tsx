@@ -11,24 +11,25 @@ import { ContentGenerationModal } from "@/components/content-generation-modal"
 
 interface ProjectDetailProps {
   projectId: string
+  project: Project  // Add project as prop
   onBack: () => void
   onUpdate: () => void
 }
 
-export function ProjectDetail({ projectId, onBack, onUpdate }: ProjectDetailProps) {
-  const [project, setProject] = useState<Project | null>(null)
+export function ProjectDetail({ projectId, project: initialProject, onBack, onUpdate }: ProjectDetailProps) {
+  const [project, setProject] = useState<Project | null>(initialProject)
   const [blogs, setBlogs] = useState<Blog[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedBlog, setSelectedBlog] = useState<Blog | null>(null)
   const [showContentGenerationModal, setShowContentGenerationModal] = useState(false)
 
   useEffect(() => {
-    loadProjectData()
-  }, [projectId])
+    if (initialProject) {
+      loadProjectData(initialProject)
+    }
+  }, [initialProject])
 
-  const loadProjectData = async () => {
-    const userData = storage.getData()
-    const foundProject = userData.projects.find((p) => p.id === projectId)
+  const loadProjectData = async (foundProject: Project) => {
 
     if (foundProject) {
       // First, try to get updated project status from backend

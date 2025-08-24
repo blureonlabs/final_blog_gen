@@ -1,308 +1,367 @@
-from celery import shared_task
-from typing import Dict, List, Any
-import logging
 import asyncio
-from uuid import UUID
-import json
-from datetime import datetime
+import logging
+from typing import List, Dict, Any
+from uuid import uuid4
+import time
 
-from core.supabase_client import supabase_client
 from core.ai_client import ai_client
-from models.blog import BlogStatus, BlogCreate, BlogUpdate
-from tasks.seo_optimization import optimize_seo_task
-from tasks.blog_formatting import format_blog_task
-from tasks.image_generation import generate_image_task
+from core.supabase_client import supabase_client
+from models.blog import BlogStatus
 
 logger = logging.getLogger(__name__)
 
-@shared_task(bind=True, name="generate_blogs_for_project")
-def generate_blogs_for_project(self, project_id: str, prompt: str, num_blogs: int, 
-                              ai_model: str = "openai", batch_size: int = 5):
+async def generate_blogs_task(
+    project_id: str,
+    prompt: str,
+    num_blogs: int,
+    ai_model: str = "openai",
+    ai_model_version: str = None,
+    user_id: str = None,
+    batch_size: int = 5
+):
     """
-    Main task to generate multiple blogs for a project
+    Main task for generating multiple blogs
     
-    Args:
-        project_id: Project UUID as string
-        prompt: Blog generation prompt
-        num_blogs: Number of blogs to generate
-        ai_model: AI model to use (openai or gemini)
-        batch_size: Number of blogs to generate in parallel
+    This function:
+    1. Generates blogs in batches to avoid overwhelming the AI APIs
+    2. Stores each generated blog in the database
+    3. Updates project status and logs progress
+    4. Handles errors gracefully and continues with remaining blogs
     """
+    supabase = supabase_client
+    
     try:
-        logger.info(f"Starting blog generation for project {project_id}: {num_blogs} blogs")
+        logger.info(f"Starting blog generation for project {project_id}: {num_blogs} blogs using {ai_model}")
         
-        # Update project status to running
-        update_project_status(project_id, "running")
+        # Update project status to generating
+        await supabase.table("projects").update({
+            "status": "generating",
+            "updated_at": "now()"
+        }).eq("id", project_id).execute()
+        
+        # Log start of generation
+        await supabase.table("logs").insert({
+            "project_id": project_id,
+            "message": f"Started generating {num_blogs} blogs using {ai_model}",
+            "timestamp": "now()"
+        }).execute()
         
         # Generate blogs in batches
-        blogs_created = 0
-        blogs_failed = 0
+        blogs_generated = 0
+        failed_blogs = 0
         
         for batch_start in range(0, num_blogs, batch_size):
             batch_end = min(batch_start + batch_size, num_blogs)
             batch_size_actual = batch_end - batch_start
             
-            logger.info(f"Processing batch {batch_start//batch_size + 1}: blogs {batch_start+1}-{batch_end}")
+            logger.info(f"Processing batch {batch_start//batch_size + 1}: blogs {batch_start + 1}-{batch_end}")
             
-            # Create batch of blog records
-            batch_blogs = create_batch_blogs(project_id, prompt, ai_model, batch_size_actual)
+            # Generate batch of blogs
+            batch_blogs = await _generate_batch(
+                project_id=project_id,
+                prompt=prompt,
+                batch_size=batch_size_actual,
+                ai_model=ai_model,
+                ai_model_version=ai_model_version,
+                batch_number=batch_start//batch_size + 1
+            )
             
-            # Process each blog in the batch
-            for blog_data in batch_blogs:
-                try:
-                    # Generate content for this blog
-                    blog_result = generate_single_blog.delay(
-                        blog_data["id"], 
-                        prompt, 
-                        ai_model,
-                        blog_data["blog_number"]
-                    )
-                    
-                    blogs_created += 1
-                    logger.info(f"Blog {blog_data['id']} queued for generation")
-                    
-                except Exception as e:
-                    logger.error(f"Failed to queue blog generation: {e}")
-                    blogs_failed += 1
-                    update_blog_status(blog_data["id"], BlogStatus.FAILED, str(e))
+            # Store batch results
+            for blog_result in batch_blogs:
+                if blog_result["success"]:
+                    blogs_generated += 1
+                    await _store_blog(project_id, blog_result["blog_data"], supabase)
+                else:
+                    failed_blogs += 1
+                    await _log_error(project_id, blog_result["error"], supabase)
             
             # Update progress
-            update_project_progress(project_id, blogs_created, num_blogs)
+            progress = int((blogs_generated / num_blogs) * 100)
+            await _update_project_progress(project_id, blogs_generated, num_blogs, progress, supabase)
             
-            # Small delay between batches to avoid overwhelming the system
+            # Small delay between batches to avoid rate limiting
             if batch_end < num_blogs:
-                import time
-                time.sleep(2)
+                await asyncio.sleep(2)
         
-        # Update project status
-        if blogs_failed == 0:
-            update_project_status(project_id, "completed")
-        elif blogs_created > 0:
-            update_project_status(project_id, "partially_completed")
-        else:
-            update_project_status(project_id, "failed")
+        # Final status update
+        final_status = "completed" if failed_blogs == 0 else "completed_with_errors"
+        await supabase.table("projects").update({
+            "status": final_status,
+            "updated_at": "now()"
+        }).eq("id", project_id).execute()
         
-        logger.info(f"Blog generation completed: {blogs_created} created, {blogs_failed} failed")
+        # Log completion
+        await supabase.table("logs").insert({
+            "project_id": project_id,
+            "message": f"Blog generation completed: {blogs_generated} successful, {failed_blogs} failed",
+            "timestamp": "now()"
+        }).execute()
+        
+        logger.info(f"Blog generation completed for project {project_id}: {blogs_generated}/{num_blogs} successful")
         
         return {
-            "project_id": project_id,
-            "blogs_created": blogs_created,
-            "blogs_failed": blogs_failed,
+            "success": True,
+            "blogs_generated": blogs_generated,
+            "failed_blogs": failed_blogs,
             "total_requested": num_blogs
         }
         
     except Exception as e:
-        logger.error(f"Error in generate_blogs_for_project: {e}")
-        update_project_status(project_id, "failed")
-        raise
-
-@shared_task(bind=True, name="generate_single_blog")
-def generate_single_blog(self, blog_id: str, prompt: str, ai_model: str, blog_number: int):
-    """
-    Generate content for a single blog
-    
-    Args:
-        blog_id: Blog UUID as string
-        prompt: Blog generation prompt
-        ai_model: AI model to use
-        blog_number: Sequential number of this blog in the project
-    """
-    try:
-        logger.info(f"Generating blog {blog_id} (blog #{blog_number})")
+        logger.error(f"Error in blog generation task for project {project_id}: {e}")
         
-        # Update blog status to generating
-        update_blog_status(blog_id, BlogStatus.GENERATING)
+        # Update project status to failed
+        await supabase.table("projects").update({
+            "status": "failed",
+            "updated_at": "now()"
+        }).eq("id", project_id).execute()
         
-        # Create unique prompt for this blog
-        unique_prompt = create_unique_prompt(prompt, blog_number)
-        
-        # Generate initial content
-        content_result = asyncio.run(
-            ai_client.generate_blog_draft(unique_prompt, ai_model)
-        )
-        
-        # Extract title and content
-        content = content_result["content"]
-        title = extract_title_from_content(content)
-        content_without_title = remove_title_from_content(content)
-        
-        # Update blog with generated content
-        update_blog_content(blog_id, title, content_without_title, content_result)
-        
-        # Update blog status to SEO optimizing
-        update_blog_status(blog_id, BlogStatus.SEO_OPTIMIZING)
-        
-        # Chain to SEO optimization task
-        seo_result = optimize_seo_task.delay(blog_id)
-        
-        logger.info(f"Blog {blog_id} content generated, queued for SEO optimization")
+        # Log error
+        await supabase.table("logs").insert({
+            "project_id": project_id,
+            "message": f"Blog generation failed: {str(e)}",
+            "timestamp": "now()"
+        }).execute()
         
         return {
-            "blog_id": blog_id,
-            "status": "content_generated",
-            "title": title,
-            "content_length": len(content_without_title),
-            "ai_model": ai_model,
-            "seo_task_id": seo_result.id
+            "success": False,
+            "error": str(e),
+            "blogs_generated": 0,
+            "failed_blogs": num_blogs
         }
-        
-    except Exception as e:
-        logger.error(f"Error generating blog {blog_id}: {e}")
-        update_blog_status(blog_id, BlogStatus.FAILED, str(e))
-        raise
 
-def create_unique_prompt(base_prompt: str, blog_number: int) -> str:
-    """Create a unique prompt for each blog to avoid duplicate content"""
-    variations = [
-        f"Create a unique perspective on: {base_prompt}",
-        f"Write about {base_prompt} from a different angle",
-        f"Explore {base_prompt} with fresh insights",
-        f"Present {base_prompt} in an innovative way",
-        f"Discuss {base_prompt} with a new approach"
-    ]
+async def _generate_batch(
+    project_id: str,
+    prompt: str,
+    batch_size: int,
+    ai_model: str,
+    ai_model_version: str = None,
+    batch_number: int = 1
+) -> List[Dict[str, Any]]:
+    """
+    Generate a batch of blogs using the AI client
+    """
+    batch_results = []
     
-    variation = variations[blog_number % len(variations)]
-    return f"{variation}. This should be blog post #{blog_number + 1} in a series."
-
-def extract_title_from_content(content: str) -> str:
-    """Extract title from the first line of content"""
-    lines = content.strip().split('\n')
-    for line in lines:
-        line = line.strip()
-        if line and not line.startswith('#'):
-            # Remove markdown formatting
-            title = line.replace('#', '').replace('*', '').replace('**', '').strip()
-            if len(title) > 10:  # Ensure it's a reasonable title
-                return title[:100]  # Limit title length
-    
-    return "Untitled Blog Post"
-
-def remove_title_from_content(content: str) -> str:
-    """Remove the title line from content"""
-    lines = content.strip().split('\n')
-    # Skip empty lines and title lines
-    content_lines = []
-    title_found = False
-    
-    for line in lines:
-        line = line.strip()
-        if line and not title_found:
-            # Skip the first non-empty line (title)
-            title_found = True
-            continue
-        content_lines.append(line)
-    
-    return '\n'.join(content_lines).strip()
-
-def create_batch_blogs(project_id: str, prompt: str, ai_model: str, batch_size: int) -> List[Dict]:
-    """Create blog records in the database for a batch"""
     try:
-        blogs_data = []
+        # Generate multiple blogs using the AI client
+        blogs_data = await ai_client.generate_multiple_blogs(
+            prompt=prompt,
+            num_blogs=batch_size,
+            ai_model=ai_model,
+            ai_model_version=ai_model_version
+        )
         
-        for i in range(batch_size):
-            blog_data = {
-                "project_id": project_id,
-                "prompt": prompt,
-                "ai_model": ai_model,
-                "status": BlogStatus.DRAFT,
-                "created_at": datetime.utcnow().isoformat(),
-                "updated_at": datetime.utcnow().isoformat()
-            }
-            
-            # Insert blog into database
-            response = supabase_client.table("blogs").insert(blog_data).execute()
-            
-            if response.data:
-                blog_id = response.data[0]["id"]
-                blogs_data.append({
-                    "id": blog_id,
-                    "blog_number": i
+        for i, blog_data in enumerate(blogs_data):
+            try:
+                # Add batch information to blog data
+                blog_data["batch_number"] = batch_number
+                blog_data["blog_number"] = i + 1
+                
+                batch_results.append({
+                    "success": True,
+                    "blog_data": blog_data
                 })
-                logger.info(f"Created blog record {blog_id}")
-            else:
-                logger.error(f"Failed to create blog record in batch")
+                
+            except Exception as e:
+                logger.error(f"Error processing blog {i + 1} in batch {batch_number}: {e}")
+                batch_results.append({
+                    "success": False,
+                    "error": str(e)
+                })
         
-        return blogs_data
+        # If AI client didn't return expected number of blogs, mark missing ones as failed
+        while len(batch_results) < batch_size:
+            batch_results.append({
+                "success": False,
+                "error": "AI client returned fewer blogs than requested"
+            })
         
     except Exception as e:
-        logger.error(f"Error creating batch blogs: {e}")
+        logger.error(f"Error generating batch {batch_number}: {e}")
+        # Mark all blogs in this batch as failed
+        for i in range(batch_size):
+            batch_results.append({
+                "success": False,
+                "error": str(e)
+            })
+    
+    return batch_results
+
+async def _store_blog(project_id: str, blog_data: Dict[str, Any], supabase) -> str:
+    """
+    Store a generated blog in the database
+    """
+    try:
+        # Create blog record
+        blog_record = {
+            "id": str(uuid4()),
+            "project_id": project_id,
+            "title": blog_data.get("title", ""),
+            "content": blog_data.get("content", ""),
+            "prompt": blog_data.get("prompt", ""),
+            "ai_model": blog_data.get("model_provider", "unknown"),
+            "ai_model_version": blog_data.get("model", ""),
+            "status": BlogStatus.DRAFT,
+            "seo_meta": {
+                "generation_model": blog_data.get("model_provider"),
+                "model_version": blog_data.get("model"),
+                "tokens_used": blog_data.get("tokens_used", 0),
+                "batch_number": blog_data.get("batch_number"),
+                "blog_number": blog_data.get("blog_number"),
+                "generated_at": time.time()
+            },
+            "generation_logs": [
+                {
+                    "timestamp": time.time(),
+                    "message": "Blog generated successfully",
+                    "status": "success"
+                }
+            ]
+        }
+        
+        # Insert into database
+        result = await supabase.table("blogs").insert(blog_record).execute()
+        
+        if result.data:
+            logger.info(f"Blog stored successfully: {blog_record['id']}")
+            return blog_record['id']
+        else:
+            logger.error(f"Failed to store blog: {result.error}")
+            raise Exception(f"Database error: {result.error}")
+            
+    except Exception as e:
+        logger.error(f"Error storing blog: {e}")
         raise
 
-def update_blog_status(blog_id: str, status: BlogStatus, error_message: str = None):
-    """Update blog status in database"""
+async def _log_error(project_id: str, error_message: str, supabase):
+    """
+    Log an error during blog generation
+    """
     try:
-        update_data = {
-            "status": status.value,
-            "updated_at": datetime.utcnow().isoformat()
-        }
-        
-        if error_message:
-            update_data["error_message"] = error_message
-        
-        response = supabase_client.table("blogs").update(update_data).eq("id", blog_id).execute()
-        
-        if not response.data:
-            logger.error(f"Failed to update blog {blog_id} status")
-            
+        await supabase.table("logs").insert({
+            "project_id": project_id,
+            "message": f"Blog generation error: {error_message}",
+            "timestamp": "now()"
+        }).execute()
     except Exception as e:
-        logger.error(f"Error updating blog status: {e}")
+        logger.error(f"Error logging error message: {e}")
 
-def update_blog_content(blog_id: str, title: str, content: str, ai_result: Dict):
-    """Update blog with generated content"""
+async def _update_project_progress(
+    project_id: str, 
+    blogs_generated: int, 
+    total_blogs: int, 
+    progress: int, 
+    supabase
+):
+    """
+    Update project progress in the database
+    """
     try:
-        update_data = {
-            "title": title,
-            "content": content,
-            "ai_model_version": ai_result.get("model_version"),
-            "generation_logs": [{
-                "step": "content_generation",
-                "timestamp": datetime.utcnow().isoformat(),
-                "ai_model": ai_result.get("model"),
-                "tokens_used": ai_result.get("tokens_used"),
-                "status": "success"
-            }],
-            "updated_at": datetime.utcnow().isoformat()
-        }
+        # Update project with current progress
+        await supabase.table("projects").update({
+            "status": "generating",
+            "updated_at": "now()"
+        }).eq("id", project_id).execute()
         
-        response = supabase_client.table("blogs").update(update_data).eq("id", blog_id).execute()
+        # Log progress update
+        await supabase.table("logs").insert({
+            "project_id": project_id,
+            "message": f"Progress: {blogs_generated}/{total_blogs} blogs generated ({progress}%)",
+            "timestamp": "now()"
+        }).execute()
         
-        if not response.data:
-            logger.error(f"Failed to update blog {blog_id} content")
-            
-    except Exception as e:
-        logger.error(f"Error updating blog content: {e}")
-
-def update_project_status(project_id: str, status: str):
-    """Update project status in database"""
-    try:
-        update_data = {
-            "status": status,
-            "updated_at": datetime.utcnow().isoformat()
-        }
-        
-        response = supabase_client.table("projects").update(update_data).eq("id", project_id).execute()
-        
-        if not response.data:
-            logger.error(f"Failed to update project {project_id} status")
-            
-    except Exception as e:
-        logger.error(f"Error updating project status: {e}")
-
-def update_project_progress(project_id: str, blogs_created: int, total_blogs: int):
-    """Update project progress in database"""
-    try:
-        progress = int((blogs_created / total_blogs) * 100)
-        
-        update_data = {
-            "progress": progress,
-            "blogs_generated": blogs_created,
-            "updated_at": datetime.utcnow().isoformat()
-        }
-        
-        response = supabase_client.table("projects").update(update_data).eq("id", project_id).execute()
-        
-        if not response.data:
-            logger.error(f"Failed to update project {project_id} progress")
-            
     except Exception as e:
         logger.error(f"Error updating project progress: {e}")
+
+async def generate_single_blog(
+    project_id: str,
+    prompt: str,
+    ai_model: str = "openai",
+    ai_model_version: str = None
+) -> Dict[str, Any]:
+    """
+    Generate a single blog (useful for testing or individual blog generation)
+    """
+    try:
+        # Generate single blog
+        blog_data = await ai_client.generate_blog_draft(
+            prompt=prompt,
+            ai_model=ai_model,
+            ai_model_version=ai_model_version
+        )
+        
+        # Store in database
+        supabase = supabase_client
+        blog_id = await _store_blog(project_id, blog_data, supabase)
+        
+        return {
+            "success": True,
+            "blog_id": blog_id,
+            "blog_data": blog_data
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating single blog: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+async def retry_failed_blog(blog_id: str) -> Dict[str, Any]:
+    """
+    Retry generation for a failed blog
+    """
+    try:
+        supabase = supabase_client
+        
+        # Get the failed blog
+        blog_response = await supabase.table("blogs").select("*").eq("id", blog_id).execute()
+        
+        if not blog_response.data:
+            return {"success": False, "error": "Blog not found"}
+        
+        blog = blog_response.data[0]
+        
+        # Retry generation with same parameters
+        blog_data = await ai_client.generate_blog_draft(
+            prompt=blog["prompt"],
+            ai_model=blog["ai_model"],
+            ai_model_version=blog.get("ai_model_version")
+        )
+        
+        # Update existing blog record
+        update_data = {
+            "title": blog_data.get("title", ""),
+            "content": blog_data.get("content", ""),
+            "status": BlogStatus.DRAFT,
+            "updated_at": "now()",
+            "error_message": None,
+            "generation_logs": blog.get("generation_logs", []) + [
+                {
+                    "timestamp": time.time(),
+                    "message": "Blog regenerated after failure",
+                    "status": "success"
+                }
+            ]
+        }
+        
+        result = await supabase.table("blogs").update(update_data).eq("id", blog_id).execute()
+        
+        if result.data:
+            return {
+                "success": True,
+                "blog_id": blog_id,
+                "message": "Blog regenerated successfully"
+            }
+        else:
+            return {
+                "success": False,
+                "error": "Failed to update blog record"
+            }
+            
+    except Exception as e:
+        logger.error(f"Error retrying failed blog {blog_id}: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }

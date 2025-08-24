@@ -1,286 +1,279 @@
 import openai
 import google.generativeai as genai
-from typing import Dict, List, Optional, Literal
+from typing import Dict, Any, Optional, List
+import asyncio
 import logging
-from core.config import settings
-import os
+from .config import settings
 
 logger = logging.getLogger(__name__)
 
 class AIClient:
-    """AI client that can switch between OpenAI and Gemini APIs"""
+    """AI client for OpenAI and Gemini APIs"""
     
     def __init__(self):
         self.openai_client = None
         self.gemini_client = None
-        self._setup_clients()
+        self._initialize_clients()
     
-    def _setup_clients(self):
-        """Setup OpenAI and Gemini clients"""
-        # Setup OpenAI
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        if openai_api_key:
-            openai.api_key = openai_api_key
-            self.openai_client = openai
-            logger.info("OpenAI client initialized")
-        
-        # Setup Gemini
-        gemini_api_key = os.getenv("GEMINI_API_KEY")
-        if gemini_api_key:
-            genai.configure(api_key=gemini_api_key)
-            self.gemini_client = genai
-            logger.info("Gemini client initialized")
+    def _initialize_clients(self):
+        """Initialize AI clients with API keys"""
+        try:
+            if settings.OPENAI_API_KEY:
+                openai.api_key = settings.OPENAI_API_KEY
+                self.openai_client = openai
+                logger.info("OpenAI client initialized successfully")
+            else:
+                logger.warning("OpenAI API key not found")
+                
+            if settings.GEMINI_API_KEY:
+                genai.configure(api_key=settings.GEMINI_API_KEY)
+                self.gemini_client = genai.GenerativeModel('gemini-pro')
+                logger.info("Gemini client initialized successfully")
+            else:
+                logger.warning("Gemini API key not found")
+                
+        except Exception as e:
+            logger.error(f"Error initializing AI clients: {e}")
     
     async def generate_blog_draft(
         self, 
         prompt: str, 
-        model: Literal["openai", "gemini"] = "openai",
+        ai_model: str = "openai",
+        ai_model_version: Optional[str] = None,
         **kwargs
-    ) -> Dict:
+    ) -> Dict[str, Any]:
         """
-        Generate a blog draft using specified AI model
+        Generate a blog draft using the specified AI model
         
         Args:
-            prompt: Blog generation prompt
-            model: AI model to use ("openai" or "gemini")
+            prompt: The blog generation prompt
+            ai_model: Either 'openai' or 'gemini'
+            ai_model_version: Specific model version (e.g., 'gpt-4', 'gpt-3.5-turbo')
             **kwargs: Additional parameters for the AI model
-        
+            
         Returns:
             Dict containing generated content and metadata
         """
         try:
-            if model == "openai":
-                return await self._generate_with_openai(prompt, **kwargs)
-            elif model == "gemini":
+            if ai_model.lower() == "openai":
+                return await self._generate_with_openai(prompt, ai_model_version, **kwargs)
+            elif ai_model.lower() == "gemini":
                 return await self._generate_with_gemini(prompt, **kwargs)
             else:
-                raise ValueError(f"Unsupported model: {model}")
+                raise ValueError(f"Unsupported AI model: {ai_model}")
+                
         except Exception as e:
-            logger.error(f"Error generating blog draft with {model}: {e}")
+            logger.error(f"Error generating blog draft with {ai_model}: {e}")
             raise
     
-    async def _generate_with_openai(self, prompt: str, **kwargs) -> Dict:
-        """Generate blog draft using OpenAI"""
+    async def _generate_with_openai(
+        self, 
+        prompt: str, 
+        model_version: Optional[str] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Generate blog draft using OpenAI API"""
         if not self.openai_client:
             raise RuntimeError("OpenAI client not initialized")
         
-        # Default parameters
-        default_params = {
-            "model": "gpt-4",
-            "max_tokens": 2000,
-            "temperature": 0.7,
-            "top_p": 1.0,
-            "frequency_penalty": 0.0,
-            "presence_penalty": 0.0
-        }
-        
-        # Override with provided kwargs
-        params = {**default_params, **kwargs}
+        # Use specified model version or default
+        model = model_version or "gpt-3.5-turbo"
         
         # Enhanced prompt for better blog generation
         enhanced_prompt = f"""
-        Write a comprehensive, engaging blog post based on the following prompt:
+        Write a comprehensive, engaging blog post based on the following topic:
         
-        {prompt}
+        TOPIC: {prompt}
         
         Requirements:
         - Write in a professional, engaging tone
-        - Include a compelling headline
-        - Structure with clear sections and subheadings
-        - Include relevant examples and insights
-        - End with a strong conclusion
-        - Target length: 800-1200 words
-        - Use markdown formatting for structure
+        - Include an attention-grabbing headline
+        - Structure with clear headings and subheadings
+        - Include introduction, main content sections, and conclusion
+        - Aim for 800-1200 words
+        - Use bullet points and numbered lists where appropriate
+        - Include a call-to-action at the end
+        - Make it SEO-friendly with natural keyword usage
         
-        Blog Post:
+        Format the response as:
+        TITLE: [Your blog title here]
+        
+        [Your blog content here with proper formatting]
         """
         
-        response = self.openai_client.ChatCompletion.create(
-            messages=[
-                {"role": "system", "content": "You are an expert content writer specializing in creating engaging, informative blog posts."},
-                {"role": "user", "content": enhanced_prompt}
-            ],
-            **params
-        )
-        
-        content = response.choices[0].message.content
-        
-        return {
-            "content": content,
-            "model": "openai",
-            "model_version": params["model"],
-            "tokens_used": response.usage.total_tokens,
-            "finish_reason": response.choices[0].finish_reason
-        }
+        try:
+            response = await asyncio.to_thread(
+                self.openai_client.ChatCompletion.create,
+                model=model,
+                messages=[
+                    {"role": "system", "content": "You are an expert content writer specializing in creating engaging, SEO-optimized blog posts."},
+                    {"role": "user", "content": enhanced_prompt}
+                ],
+                max_tokens=kwargs.get('max_tokens', 2000),
+                temperature=kwargs.get('temperature', 0.7),
+                top_p=kwargs.get('top_p', 1.0),
+                frequency_penalty=kwargs.get('frequency_penalty', 0.0),
+                presence_penalty=kwargs.get('presence_penalty', 0.0)
+            )
+            
+            content = response.choices[0].message.content
+            
+            # Extract title and content
+            title = ""
+            blog_content = content
+            
+            if "TITLE:" in content:
+                title_part, content_part = content.split("TITLE:", 1)
+                title = title_part.strip()
+                blog_content = content_part.strip()
+            
+            return {
+                "title": title or f"Blog about {prompt}",
+                "content": blog_content,
+                "model": model,
+                "tokens_used": response.usage.total_tokens,
+                "model_provider": "openai"
+            }
+            
+        except Exception as e:
+            logger.error(f"OpenAI API error: {e}")
+            raise
     
-    async def _generate_with_gemini(self, prompt: str, **kwargs) -> Dict:
-        """Generate blog draft using Gemini"""
+    async def _generate_with_gemini(
+        self, 
+        prompt: str, 
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Generate blog draft using Gemini API"""
         if not self.gemini_client:
             raise RuntimeError("Gemini client not initialized")
         
-        # Default parameters
-        default_params = {
-            "model": "gemini-pro",
-            "temperature": 0.7,
-            "top_p": 1.0,
-            "top_k": 40,
-            "max_output_tokens": 2000
-        }
-        
-        # Override with provided kwargs
-        params = {**default_params, **kwargs}
-        
-        # Enhanced prompt for better blog generation
+        # Enhanced prompt for Gemini
         enhanced_prompt = f"""
-        Write a comprehensive, engaging blog post based on the following prompt:
+        Write a comprehensive, engaging blog post based on the following topic:
         
-        {prompt}
+        TOPIC: {prompt}
         
         Requirements:
         - Write in a professional, engaging tone
-        - Include a compelling headline
-        - Structure with clear sections and subheadings
-        - Include relevant examples and insights
-        - End with a strong conclusion
-        - Target length: 800-1200 words
-        - Use markdown formatting for structure
+        - Include an attention-grabbing headline
+        - Structure with clear headings and subheadings
+        - Include introduction, main content sections, and conclusion
+        - Aim for 800-1200 words
+        - Use bullet points and numbered lists where appropriate
+        - Include a call-to-action at the end
+        - Make it SEO-friendly with natural keyword usage
         
-        Blog Post:
+        Format the response as:
+        TITLE: [Your blog title here]
+        
+        [Your blog content here with proper formatting]
         """
         
-        model = self.gemini_client.GenerativeModel(
-            model_name=params["model"],
-            generation_config=self.gemini_client.types.GenerationConfig(
-                temperature=params["temperature"],
-                top_p=params["top_p"],
-                top_k=params["top_k"],
-                max_output_tokens=params["max_output_tokens"]
+        try:
+            response = await asyncio.to_thread(
+                self.gemini_client.generate_content,
+                enhanced_prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=kwargs.get('temperature', 0.7),
+                    top_p=kwargs.get('top_p', 1.0),
+                    top_k=kwargs.get('top_k', 40),
+                    max_output_tokens=kwargs.get('max_tokens', 2000)
+                )
             )
-        )
-        
-        response = model.generate_content(enhanced_prompt)
-        
-        return {
-            "content": response.text,
-            "model": "gemini",
-            "model_version": params["model"],
-            "finish_reason": "stop" if response.candidates[0].finish_reason == 1 else "other"
-        }
+            
+            content = response.text
+            
+            # Extract title and content
+            title = ""
+            blog_content = content
+            
+            if "TITLE:" in content:
+                title_part, content_part = content.split("TITLE:", 1)
+                title = title_part.strip()
+                blog_content = content_part.strip()
+            
+            return {
+                "title": title or f"Blog about {prompt}",
+                "content": blog_content,
+                "model": "gemini-pro",
+                "tokens_used": len(content.split()),  # Approximate token count
+                "model_provider": "gemini"
+            }
+            
+        except Exception as e:
+            logger.error(f"Gemini API error: {e}")
+            raise
     
-    async def refine_blog_content(
-        self, 
-        content: str, 
-        instructions: str,
-        model: Literal["openai", "gemini"] = "openai",
+    async def generate_multiple_blogs(
+        self,
+        prompt: str,
+        num_blogs: int,
+        ai_model: str = "openai",
+        ai_model_version: Optional[str] = None,
         **kwargs
-    ) -> Dict:
+    ) -> List[Dict[str, Any]]:
         """
-        Refine existing blog content based on instructions
+        Generate multiple blog drafts
         
         Args:
-            content: Original blog content
-            instructions: Refinement instructions
-            model: AI model to use
-            **kwargs: Additional parameters
-        
+            prompt: The blog generation prompt
+            num_blogs: Number of blogs to generate
+            ai_model: Either 'openai' or 'gemini'
+            ai_model_version: Specific model version
+            **kwargs: Additional parameters for the AI model
+            
         Returns:
-            Dict containing refined content
+            List of generated blog drafts
         """
-        try:
-            if model == "openai":
-                return await self._refine_with_openai(content, instructions, **kwargs)
-            elif model == "gemini":
-                return await self._refine_with_gemini(content, instructions, **kwargs)
-            else:
-                raise ValueError(f"Unsupported model: {model}")
-        except Exception as e:
-            logger.error(f"Error refining blog content with {model}: {e}")
-            raise
-    
-    async def _refine_with_openai(self, content: str, instructions: str, **kwargs) -> Dict:
-        """Refine content using OpenAI"""
-        if not self.openai_client:
-            raise RuntimeError("OpenAI client not initialized")
+        blogs = []
         
-        refinement_prompt = f"""
-        Please refine the following blog content based on these instructions:
+        for i in range(num_blogs):
+            try:
+                # Add variation to prompt for different blogs
+                varied_prompt = f"{prompt} (Blog {i+1} of {num_blogs})"
+                
+                blog_draft = await self.generate_blog_draft(
+                    varied_prompt, 
+                    ai_model, 
+                    ai_model_version, 
+                    **kwargs
+                )
+                
+                blogs.append(blog_draft)
+                
+                # Small delay to avoid rate limiting
+                await asyncio.sleep(0.5)
+                
+            except Exception as e:
+                logger.error(f"Error generating blog {i+1}: {e}")
+                # Continue with other blogs even if one fails
+                continue
         
-        Instructions: {instructions}
-        
-        Original Content:
-        {content}
-        
-        Refined Content:
-        """
-        
-        response = self.openai_client.ChatCompletion.create(
-            messages=[
-                {"role": "system", "content": "You are an expert content editor who can improve blog posts based on specific instructions."},
-                {"role": "user", "content": refinement_prompt}
-            ],
-            model="gpt-4",
-            max_tokens=2500,
-            temperature=0.3,
-            **kwargs
-        )
-        
-        refined_content = response.choices[0].message.content
-        
-        return {
-            "original_content": content,
-            "refined_content": refined_content,
-            "instructions": instructions,
-            "model": "openai",
-            "tokens_used": response.usage.total_tokens
-        }
-    
-    async def _refine_with_gemini(self, content: str, instructions: str, **kwargs) -> Dict:
-        """Refine content using Gemini"""
-        if not self.gemini_client:
-            raise RuntimeError("Gemini client not initialized")
-        
-        refinement_prompt = f"""
-        Please refine the following blog content based on these instructions:
-        
-        Instructions: {instructions}
-        
-        Original Content:
-        {content}
-        
-        Refined Content:
-        """
-        
-        model = self.gemini_client.GenerativeModel("gemini-pro")
-        response = model.generate_content(refinement_prompt)
-        
-        return {
-            "original_content": content,
-            "refined_content": response.text,
-            "instructions": instructions,
-            "model": "gemini"
-        }
+        return blogs
     
     def get_available_models(self) -> Dict[str, List[str]]:
-        """Get available models for each AI provider"""
-        models = {}
+        """Get available AI models for each provider"""
+        models = {
+            "openai": ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-3.5-turbo-16k"],
+            "gemini": ["gemini-pro", "gemini-pro-vision"]
+        }
         
-        if self.openai_client:
-            models["openai"] = ["gpt-4", "gpt-3.5-turbo", "gpt-4-turbo"]
-        
-        if self.gemini_client:
-            models["gemini"] = ["gemini-pro", "gemini-pro-vision"]
-        
+        # Filter based on available clients
+        if not self.openai_client:
+            models["openai"] = []
+        if not self.gemini_client:
+            models["gemini"] = []
+            
         return models
     
-    def is_model_available(self, model: str) -> bool:
-        """Check if a specific model is available"""
-        available_models = self.get_available_models()
-        
-        for provider, models_list in available_models.items():
-            if model in models_list:
-                return True
-        
+    def is_model_available(self, ai_model: str, model_version: Optional[str] = None) -> bool:
+        """Check if a specific AI model is available"""
+        if ai_model.lower() == "openai":
+            return self.openai_client is not None
+        elif ai_model.lower() == "gemini":
+            return self.gemini_client is not None
         return False
 
-# Global AI client instance
+# Create global AI client instance
 ai_client = AIClient()

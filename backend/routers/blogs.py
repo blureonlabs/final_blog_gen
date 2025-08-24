@@ -17,7 +17,7 @@ from models.blog import (
 )
 from core.supabase_client import supabase_client, verify_user_exists
 from core.auth import get_current_user
-from tasks.content_generation import generate_blogs_for_project
+from tasks.content_generation import generate_blogs_task
 from tasks.wordpress_publishing import bulk_publish_to_wordpress_task
 
 # Configure logging
@@ -96,7 +96,7 @@ async def generate_blogs(
             traceback.print_exc()
         
         # Start blog generation task (simulated for now)
-        # task = generate_blogs_for_project.delay(
+        # task = generate_blogs_task.delay(
         #     str(request.project_id),
         #     request.prompt,
         #     request.num_blogs,

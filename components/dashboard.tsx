@@ -60,8 +60,12 @@ export function Dashboard({ user }: DashboardProps) {
   }
 
   const handleProjectSelect = (projectId: string) => {
-    setSelectedProjectId(projectId)
-    setActiveView("project")
+    const project = userData?.projects.find(p => p.id === projectId)
+    if (project) {
+      setSelectedProjectId(projectId)
+      setSelectedProject(project)
+      setActiveView("project")
+    }
   }
 
   const handleResume = (project: Project) => {
@@ -277,9 +281,10 @@ export function Dashboard({ user }: DashboardProps) {
           </div>
         )}
 
-        {activeView === "project" && selectedProjectId && (
+        {activeView === "project" && selectedProjectId && selectedProject && (
           <ProjectDetail
             projectId={selectedProjectId}
+            project={selectedProject}
             onBack={() => setActiveView("dashboard")}
             onUpdate={handleDataUpdate}
           />

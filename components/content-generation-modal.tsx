@@ -1,319 +1,379 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { X, FileText, Brain, Settings, Play, Clock, ArrowLeft } from "lucide-react"
-import { Project } from "@/lib/storage"
-import { storage } from "@/lib/storage"
+import React, { useState, useEffect } from 'react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { Textarea } from './ui/textarea';
+import { Progress } from './ui/progress';
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
+import { Badge } from './ui/badge';
+import { useToast } from '../hooks/use-toast';
+import { supabase } from '../lib/supabase';
 
 interface ContentGenerationModalProps {
-  project: Project
-  onClose: () => void
-  onStartGeneration: () => void
+  isOpen: boolean;
+  onClose: () => void;
+  projectId: string;
+  projectName: string;
 }
 
-export function ContentGenerationModal({ project, onClose, onStartGeneration }: ContentGenerationModalProps) {
-  const [generationPrompt, setGenerationPrompt] = useState("")
-  const [numBlogs, setNumBlogs] = useState(project.total_blogs)
-  const [aiModel, setAiModel] = useState(project.draft_creation_model || "openai")
-  const [batchSize, setBatchSize] = useState(5)
-  const [loading, setLoading] = useState(false)
+interface AIModel {
+  openai: string[];
+  gemini: string[];
+}
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    console.log("Form submitted with:", { generationPrompt, numBlogs, aiModel, batchSize })
-    
-    if (!generationPrompt.trim()) {
-      alert("Please enter a generation prompt")
-      return
+interface GenerationStatus {
+  project_id: string;
+  project_name: string;
+  total_blogs_requested: number;
+  blogs_generated: number;
+  progress_percentage: number;
+  status_breakdown: Record<string, number>;
+  project_status: string;
+}
+
+export function ContentGenerationModal({
+  isOpen,
+  onClose,
+  projectId,
+  projectName
+}: ContentGenerationModalProps) {
+  const [prompt, setPrompt] = useState('');
+  const [numBlogs, setNumBlogs] = useState(5);
+  const [aiModel, setAiModel] = useState('openai');
+  const [aiModelVersion, setAiModelVersion] = useState('');
+  const [batchSize, setBatchSize] = useState(5);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generationStatus, setGenerationStatus] = useState<GenerationStatus | null>(null);
+  const [availableModels, setAvailableModels] = useState<AIModel>({ openai: [], gemini: [] });
+  const [statusInterval, setStatusInterval] = useState<NodeJS.Timeout | null>(null);
+  
+  const { toast } = useToast();
+
+  // Fetch available AI models
+  useEffect(() => {
+    if (isOpen) {
+      fetchAvailableModels();
     }
-    
-    setLoading(true)
+  }, [isOpen]);
 
+  // Start status polling when generation starts
+  useEffect(() => {
+    if (isGenerating && generationStatus) {
+      const interval = setInterval(() => {
+        fetchGenerationStatus();
+      }, 5000); // Poll every 5 seconds
+      
+      setStatusInterval(interval);
+      
+      return () => {
+        if (interval) clearInterval(interval);
+      };
+    }
+  }, [isGenerating, generationStatus]);
+
+  const fetchAvailableModels = async () => {
     try {
-      // Call the backend API to start content generation
-      const response = await fetch('http://localhost:8000/api/blogs/generate', {
+      const response = await fetch('/api/content-generation/available-models');
+      if (response.ok) {
+        const data = await response.json();
+        setAvailableModels(data.models);
+        
+        // Set default model version
+        if (data.models.openai.length > 0) {
+          setAiModelVersion(data.models.openai[0]);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching available models:', error);
+    }
+  };
+
+  const fetchGenerationStatus = async () => {
+    try {
+      const response = await fetch(`/api/content-generation/generation-status/${projectId}`);
+      if (response.ok) {
+        const status = await response.json();
+        setGenerationStatus(status);
+        
+        // Check if generation is complete
+        if (['completed', 'completed_with_errors', 'failed'].includes(status.project_status)) {
+          setIsGenerating(false);
+          if (statusInterval) {
+            clearInterval(statusInterval);
+            setStatusInterval(null);
+          }
+          
+          toast({
+            title: "Generation Complete",
+            description: `Generated ${status.blogs_generated}/${status.total_blogs_requested} blogs`,
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching generation status:', error);
+    }
+  };
+
+  const handleGenerate = async () => {
+    if (!prompt.trim()) {
+      toast({
+        title: "Error",
+        description: "Please enter a prompt for blog generation",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setIsGenerating(true);
+    
+    try {
+      const response = await fetch('/api/content-generation/generate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          // Note: In production, you'd include the user's JWT token here
-          // 'Authorization': `Bearer ${userToken}`
         },
         body: JSON.stringify({
-          project_id: project.id,
-          prompt: generationPrompt,
+          project_id: projectId,
+          prompt: prompt.trim(),
           num_blogs: numBlogs,
           ai_model: aiModel,
+          ai_model_version: aiModelVersion,
           batch_size: batchSize
-        })
-      })
+        }),
+      });
 
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.detail || `HTTP ${response.status}`)
-      }
-
-      const result = await response.json()
-      console.log("Content generation started:", result)
-
-      // Update project status to running
-      storage.updateProject(project.id, { 
-        status: "running", 
-        updated_at: new Date().toISOString() 
-      })
-
-      // Show success message
-      alert(`✅ Content generation started! Task ID: ${result.task_id}\n\nEstimated time: ${result.estimated_time} minutes\n\nYou can monitor progress in the project details.`)
-
-      // Call the parent handler
-      onStartGeneration()
-    } catch (error) {
-      console.error("Failed to start content generation:", error)
-      
-      if (error.message.includes('Failed to fetch')) {
-        alert("❌ Cannot connect to backend server. Please ensure the backend is running on localhost:8000")
+      if (response.ok) {
+        const data = await response.json();
+        toast({
+          title: "Generation Started",
+          description: data.message,
+        });
+        
+        // Fetch initial status
+        await fetchGenerationStatus();
       } else {
-        alert(`❌ Failed to start content generation: ${error.message}`)
+        const error = await response.json();
+        throw new Error(error.detail || 'Failed to start generation');
       }
-    } finally {
-      setLoading(false)
+    } catch (error) {
+      console.error('Error starting generation:', error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : 'Failed to start generation',
+        variant: "destructive"
+      });
+      setIsGenerating(false);
     }
-  }
+  };
+
+  const handleClose = () => {
+    if (statusInterval) {
+      clearInterval(statusInterval);
+      setStatusInterval(null);
+    }
+    setIsGenerating(false);
+    setGenerationStatus(null);
+    onClose();
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'completed': return 'bg-green-100 text-green-800';
+      case 'completed_with_errors': return 'bg-yellow-100 text-yellow-800';
+      case 'failed': return 'bg-red-100 text-red-800';
+      case 'generating': return 'bg-blue-100 text-blue-800';
+      default: return 'bg-gray-100 text-gray-800';
+    }
+  };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <Card className="w-full max-w-4xl bg-white shadow-xl max-h-[90vh] overflow-y-auto">
-        <CardHeader className="sticky top-0 bg-white z-10 border-b border-gray-200">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <Button
-                onClick={onClose}
-                variant="ghost"
-                size="sm"
-                className="text-gray-400 hover:text-gray-600 p-2"
-                title="Go back to projects"
-              >
-                <ArrowLeft className="h-4 w-4" />
-              </Button>
-              <div>
-                <CardTitle className="text-xl font-semibold text-gray-900">
-                  {project.status === "pending" ? "Start Content Generation" : "Resume Content Generation"}
-                </CardTitle>
-                <CardDescription className="text-gray-600">
-                  Configure parameters for generating {project.total_blogs} blogs for "{project.name}"
-                </CardDescription>
-              </div>
-            </div>
-            <Button
-              onClick={onClose}
-              variant="ghost"
-              size="sm"
-              className="text-gray-400 hover:text-gray-600"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="p-6">
-          <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Project Information */}
-            <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-              <h4 className="text-sm font-medium text-gray-700 mb-2">Project Details</h4>
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <span className="text-gray-600">Name:</span>
-                  <p className="font-medium text-gray-900">{project.name}</p>
-                </div>
-                <div>
-                  <span className="text-gray-600">Description:</span>
-                  <p className="font-medium text-gray-900">{project.description}</p>
-                </div>
-                <div>
-                  <span className="text-gray-600">Total Blogs:</span>
-                  <p className="font-medium text-gray-900">{project.total_blogs}</p>
-                </div>
-                <div>
-                  <span className="text-gray-600">AI Model:</span>
-                  <p className="font-medium text-gray-900 capitalize">{aiModel}</p>
-                </div>
-              </div>
-            </div>
+    <Dialog open={isOpen} onOpenChange={handleClose}>
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Generate Blogs for "{projectName}"</DialogTitle>
+        </DialogHeader>
 
-            {/* Instructions */}
-            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-              <div className="flex items-start space-x-2">
-                <FileText className="h-4 w-4 text-blue-600 mt-0.5 flex-shrink-0" />
-                <div className="text-sm text-blue-700">
-                  <p className="font-medium mb-1">Ready to generate content?</p>
-                  <p>Fill in the generation prompt below to start creating your {project.total_blogs} blogs. You can adjust the number of blogs and batch size as needed.</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Generation Parameters */}
+        <div className="space-y-6">
+          {/* Generation Form */}
+          {!isGenerating && (
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Generation Prompt <span className="text-red-500">*</span>
-                </label>
+                <Label htmlFor="prompt">Blog Topic/Prompt</Label>
                 <Textarea
-                  placeholder="Describe what kind of content you want to generate (e.g., 'Write comprehensive guides about digital marketing strategies for small businesses')"
-                  value={generationPrompt}
-                  onChange={(e) => setGenerationPrompt(e.target.value)}
-                  rows={4}
-                  required
-                  className="w-full border-gray-300 focus:border-blue-500 focus:ring-blue-500"
+                  id="prompt"
+                  placeholder="Enter the topic or prompt for blog generation..."
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  rows={3}
+                  className="mt-1"
                 />
-                <p className="text-xs text-gray-500 mt-1">
-                  Be specific about the topic, tone, and target audience
-                </p>
-                {generationPrompt.trim() && (
-                  <p className="text-xs text-green-600 mt-1">
-                    ✓ Prompt entered - Form is ready to submit
-                  </p>
-                )}
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Number of Blogs
-                  </label>
+                  <Label htmlFor="numBlogs">Number of Blogs</Label>
                   <Input
+                    id="numBlogs"
                     type="number"
                     min="1"
-                    max={project.total_blogs}
+                    max="100"
                     value={numBlogs}
                     onChange={(e) => setNumBlogs(parseInt(e.target.value) || 1)}
-                    className="w-full"
+                    className="mt-1"
                   />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Max: {project.total_blogs} blogs
-                  </p>
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Batch Size
-                  </label>
+                  <Label htmlFor="batchSize">Batch Size</Label>
                   <Input
+                    id="batchSize"
                     type="number"
                     min="1"
-                    max="10"
+                    max="20"
                     value={batchSize}
-                    onChange={(e) => setBatchSize(parseInt(e.target.value) || 1)}
-                    className="w-full"
+                    onChange={(e) => setBatchSize(parseInt(e.target.value) || 5)}
+                    className="mt-1"
                   />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Blogs processed simultaneously (1-10)
-                  </p>
                 </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  AI Model
-                </label>
-                <div className="flex space-x-4">
-                  <label className="flex items-center space-x-2">
-                    <input
-                      type="radio"
-                      name="aiModel"
-                      value="openai"
-                      checked={aiModel === "openai"}
-                      onChange={(e) => setAiModel(e.target.value)}
-                      className="text-indigo-600"
-                    />
-                    <span className="text-sm text-gray-700">OpenAI GPT-4</span>
-                  </label>
-                  <label className="flex items-center space-x-2">
-                    <input
-                      type="radio"
-                      name="aiModel"
-                      value="gemini"
-                      checked={aiModel === "gemini"}
-                      onChange={(e) => setAiModel(e.target.value)}
-                      className="text-indigo-600"
-                    />
-                    <span className="text-sm text-gray-700">Gemini Pro</span>
-                  </label>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="aiModel">AI Model</Label>
+                  <Select value={aiModel} onValueChange={setAiModel}>
+                    <SelectTrigger className="mt-1">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableModels.openai.length > 0 && (
+                        <SelectItem value="openai">OpenAI</SelectItem>
+                      )}
+                      {availableModels.gemini.length > 0 && (
+                        <SelectItem value="gemini">Gemini</SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label htmlFor="aiModelVersion">Model Version</Label>
+                  <Select value={aiModelVersion} onValueChange={setAiModelVersion}>
+                    <SelectTrigger className="mt-1">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {aiModel === 'openai' && availableModels.openai.map((model) => (
+                        <SelectItem key={model} value={model}>
+                          {model}
+                        </SelectItem>
+                      ))}
+                      {aiModel === 'gemini' && availableModels.gemini.map((model) => (
+                        <SelectItem key={model} value={model}>
+                          {model}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
-            </div>
 
-            {/* Estimated Time */}
-            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-              <div className="flex items-center space-x-2">
-                <Clock className="h-4 w-4 text-blue-600" />
-                <span className="text-sm text-blue-700">
-                  Estimated generation time: {Math.ceil(numBlogs / batchSize)} minutes
-                </span>
+              <Button 
+                onClick={handleGenerate} 
+                className="w-full"
+                disabled={!prompt.trim() || availableModels[aiModel as keyof AIModel]?.length === 0}
+              >
+                Start Generation
+              </Button>
+            </div>
+          )}
+
+          {/* Generation Progress */}
+          {isGenerating && generationStatus && (
+            <div className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center justify-between">
+                    Generation Progress
+                    <Badge className={getStatusColor(generationStatus.project_status)}>
+                      {generationStatus.project_status}
+                    </Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    <div>
+                      <div className="flex justify-between text-sm mb-2">
+                        <span>Progress</span>
+                        <span>{generationStatus.progress_percentage}%</span>
+                      </div>
+                      <Progress value={generationStatus.progress_percentage} className="w-full" />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <span className="font-medium">Blogs Generated:</span>
+                        <span className="ml-2">{generationStatus.blogs_generated}/{generationStatus.total_blogs_requested}</span>
+                      </div>
+                      <div>
+                        <span className="font-medium">Status:</span>
+                        <span className="ml-2 capitalize">{generationStatus.project_status}</span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <span className="font-medium text-sm">Status Breakdown:</span>
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {Object.entries(generationStatus.status_breakdown).map(([status, count]) => (
+                          <Badge key={status} variant="outline">
+                            {status}: {count}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <div className="text-center text-sm text-gray-600">
+                Generation is in progress. This may take several minutes depending on the number of blogs.
               </div>
             </div>
+          )}
 
-            {/* Where to Check Generated Content */}
-            <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
-              <div className="flex items-start space-x-2">
-                <FileText className="h-4 w-4 text-green-600 mt-0.5 flex-shrink-0" />
-                <div className="text-sm text-green-700">
-                  <p className="font-medium mb-1">📍 Where to Check Generated Content:</p>
-                  <ul className="list-disc list-inside space-y-1 text-xs">
-                    <li><strong>Project Details:</strong> Click on your project to see blog status</li>
-                    <li><strong>Backend API:</strong> GET /api/blogs/project/{project.id}</li>
-                    <li><strong>Database:</strong> Check 'blogs' table in Supabase</li>
-                    <li><strong>Console Logs:</strong> Backend terminal shows progress</li>
-                  </ul>
-                </div>
+          {/* Available Models Info */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Available AI Models</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {Object.entries(availableModels).map(([provider, models]) => (
+                  <div key={provider}>
+                    <span className="font-medium capitalize">{provider}:</span>
+                    {models.length > 0 ? (
+                      <div className="flex flex-wrap gap-2 mt-1">
+                        {models.map((model) => (
+                          <Badge key={model} variant="secondary" className="text-xs">
+                            {model}
+                          </Badge>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-gray-500 ml-2">No API key configured</span>
+                    )}
+                  </div>
+                ))}
               </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex space-x-3 pt-4 border-t border-gray-200">
-              <Button
-                type="button"
-                onClick={onClose}
-                variant="outline"
-                className="flex-1 border-gray-300 text-gray-600 hover:bg-gray-50 bg-transparent"
-              >
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Back to Projects
-              </Button>
-              
-              {/* Debug button - remove this in production */}
-              <Button
-                type="button"
-                onClick={() => console.log("Current form state:", { generationPrompt, numBlogs, aiModel, batchSize })}
-                variant="outline"
-                size="sm"
-                className="px-3 text-xs"
-              >
-                Debug
-              </Button>
-              
-              <Button
-                type="submit"
-                disabled={loading || !generationPrompt.trim() || numBlogs < 1}
-                className="flex-1 bg-green-600 hover:bg-green-700 text-white disabled:opacity-50"
-              >
-                {loading ? (
-                  <>
-                    <Clock className="h-4 w-4 mr-2 animate-spin" />
-                    Starting Generation...
-                  </>
-                ) : (
-                  <>
-                    <Play className="h-4 w-4 mr-2" />
-                    {project.status === "pending" ? "Start Generation" : "Resume Generation"}
-                  </>
-                )}
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
-    </div>
-  )
+            </CardContent>
+          </Card>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
 }
+
+export default ContentGenerationModal;
