@@ -34,16 +34,21 @@ async def create_project(
         if not await verify_user_exists(user_id):
             raise HTTPException(status_code=404, detail="User not found")
         
-        # Prepare project data
+        # Prepare project data with all required fields
         project_data = {
             "user_id": user_id,
             "name": project.name,
             "description": project.description,
             "num_blogs": project.num_blogs,
-            "ai_model": project.ai_model,
+            "completed_blogs": 0,  # Initialize with 0 completed blogs
+            "status": "ready",  # Set status to "ready" instead of "pending"
             "wordpress_account_id": str(project.wordpress_account_id) if project.wordpress_account_id else None,
             "api_keys": project.api_keys,
-            "status": "pending",
+            "settings": None,  # Initialize as None
+            "draft_creation_model": project.ai_model,  # Use ai_model as draft creation model
+            "content_vetting_model": project.ai_model,  # Use ai_model as content vetting model
+            "model_settings": None,  # Initialize as None
+            "workflow_preferences": None,  # Initialize as None
             "created_at": datetime.utcnow().isoformat(),
             "updated_at": datetime.utcnow().isoformat()
         }

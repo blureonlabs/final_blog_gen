@@ -52,6 +52,29 @@ def custom_openapi_schema(app) -> Dict[str, Any]:
                 }
             }
         },
+        "ProjectResponse": {
+            "summary": "Sample Project Response",
+            "description": "Example of a created project response",
+            "value": {
+                "idx": 0,
+                "id": "255fd777-e9dd-4244-a358-aec045f69453",
+                "user_id": "00000000-0000-0000-0000-000000000000",
+                "name": "Test Project",
+                "description": "Test Description",
+                "num_blogs": 5,
+                "completed_blogs": 0,
+                "status": "ready",
+                "wordpress_account_id": None,
+                "api_keys": None,
+                "settings": None,
+                "draft_creation_model": "gpt-4",
+                "content_vetting_model": "gpt-4",
+                "model_settings": None,
+                "workflow_preferences": None,
+                "created_at": "2025-08-24 20:06:00.75534+00",
+                "updated_at": "2025-08-24 20:06:00.75534+00"
+            }
+        },
         "BlogGenerationRequest": {
             "summary": "Sample Blog Generation Request",
             "description": "Example of requesting blog generation",

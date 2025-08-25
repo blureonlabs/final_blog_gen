@@ -25,14 +25,31 @@ class ProjectUpdate(BaseModel):
     wordpress_account_id: Optional[UUID] = None
     api_keys: Optional[Dict[str, Any]] = None
     status: Optional[str] = Field(None, description="Project status")
+    completed_blogs: Optional[int] = Field(None, ge=0, description="Number of completed blogs")
+    draft_creation_model: Optional[str] = Field(None, description="Model for draft creation")
+    content_vetting_model: Optional[str] = Field(None, description="Model for content vetting")
+    model_settings: Optional[Dict[str, Any]] = Field(None, description="Model-specific settings")
+    workflow_preferences: Optional[Dict[str, Any]] = Field(None, description="Workflow preferences")
 
-class ProjectResponse(ProjectBase):
+class ProjectResponse(BaseModel):
     """Model for project response"""
-    id: UUID
-    user_id: UUID
-    status: str = Field(default="pending", description="Project status")
-    created_at: datetime
-    updated_at: datetime
+    idx: Optional[int] = Field(None, description="Database index")
+    id: UUID = Field(..., description="Project UUID")
+    user_id: UUID = Field(..., description="User UUID")
+    name: str = Field(..., description="Project name")
+    description: Optional[str] = Field(None, description="Project description")
+    num_blogs: int = Field(..., description="Number of blogs to generate")
+    completed_blogs: int = Field(default=0, description="Number of completed blogs")
+    status: str = Field(default="ready", description="Project status")
+    wordpress_account_id: Optional[UUID] = Field(None, description="WordPress account ID")
+    api_keys: Optional[Dict[str, Any]] = Field(None, description="API keys configuration")
+    settings: Optional[Dict[str, Any]] = Field(None, description="Project settings")
+    draft_creation_model: Optional[str] = Field(None, description="Model for draft creation")
+    content_vetting_model: Optional[str] = Field(None, description="Model for content vetting")
+    model_settings: Optional[Dict[str, Any]] = Field(None, description="Model-specific settings")
+    workflow_preferences: Optional[Dict[str, Any]] = Field(None, description="Workflow preferences")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: datetime = Field(..., description="Last update timestamp")
     
     class Config:
         from_attributes = True
