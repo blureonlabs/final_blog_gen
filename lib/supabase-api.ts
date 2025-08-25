@@ -6,10 +6,10 @@ export interface Project {
   id: string
   name: string
   description: string
-  total_blogs: number
+  num_blogs: number  // Changed from total_blogs to match database
   completed_blogs: number
   status: "pending" | "in_progress" | "completed" | "failed" | "ready"
-  wordpress_account_id?: string
+  wordpress_account_id?: string  // Changed from wordpress_account to match database
   api_keys?: any
   settings?: any
   // AI Model Configuration
@@ -28,9 +28,9 @@ export interface Project {
     }
   }
   workflow_preferences?: {
+    vetting_threshold: number
     auto_vet_after_draft: boolean
     require_human_review: boolean
-    vetting_threshold: number
   }
   created_at: string
   updated_at: string
@@ -551,32 +551,66 @@ class SupabaseAPI {
       const projectData = {
         ...project,
         user_id: userId,
-        status: project.status || 'pending'
+        status: project.status || 'pending',
+        // Map frontend fields to database fields
+        num_blogs: project.total_blogs || project.num_blogs || 0,
+        wordpress_account_id: project.wordpress_account_id || null,
+        // Remove fields that don't exist in database
+        total_blogs: undefined
       }
 
       console.log('🔍 Adding project to Supabase:', projectData)
       
-      const { data, error } = await supabase
-        .from('projects')
-        .insert(projectData)
-        .select()
-        .single()
-
-      if (error) {
-        console.error('❌ Error adding project:', error)
-        
-        // Check if it's a constraint violation
-        if ('code' in error && error.code === '23514') {
-          throw new Error(`Database constraint violation: ${error.message}. Please check your project data.`)
-        } else if ('code' in error && error.code === '23505') {
-          throw new Error(`Duplicate project: ${error.message}`)
-        } else {
-          throw new Error(`Failed to create project: ${error.message}`)
-        }
+      // Debug Supabase connection
+      console.log('🔍 Supabase URL:', process.env.NEXT_PUBLIC_SUPABASE_URL)
+      console.log('🔍 Supabase configured:', this.isSupabaseConfigured())
+      console.log('🔍 Supabase client:', !!supabase)
+      
+      // Test Supabase connection first
+      try {
+        console.log('🔍 Testing Supabase connection...')
+        const testResponse = await supabase.from('projects').select('id').limit(1)
+        console.log('🔍 Supabase connection test result:', testResponse)
+      } catch (testError) {
+        console.error('❌ Supabase connection test failed:', testError)
+        throw new Error(`Supabase connection failed: ${testError.message}`)
       }
+      
+      try {
+        // Add timeout to prevent hanging
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Supabase operation timed out after 10 seconds')), 10000)
+        })
+        
+        const supabasePromise = supabase
+          .from('projects')
+          .insert(projectData)
+          .select()
+          .single()
+        
+        const { data, error } = await Promise.race([supabasePromise, timeoutPromise])
+        
+        console.log('🔍 Supabase response received:', { data, error })
+        
+        if (error) {
+          console.error('❌ Error adding project:', error)
+          
+          // Check if it's a constraint violation
+          if ('code' in error && error.code === '23514') {
+            throw new Error(`Database constraint violation: ${error.message}. Please check your project data.`)
+          } else if ('code' in error && error.code === '23505') {
+            throw new Error(`Duplicate project: ${error.message}`)
+          } else {
+            throw new Error(`Failed to create project: ${error.message}`)
+          }
+        }
 
-      console.log('✅ Project added successfully:', data)
-      return data
+        console.log('✅ Project added successfully:', data)
+        return data
+      } catch (insertError) {
+        console.error('❌ Supabase insert failed:', insertError)
+        throw insertError
+      }
     } catch (error) {
       console.error('❌ Error in addProject:', error)
       throw error

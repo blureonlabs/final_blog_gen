@@ -27,9 +27,8 @@ interface AIModel {
 
 interface GenerationStatus {
   project_id: string;
-  project_name: string;
-  total_blogs_requested: number;
   blogs_generated: number;
+  num_blogs_requested: number;  // Changed from total_blogs_requested
   progress_percentage: number;
   status_breakdown: Record<string, number>;
   project_status: string;
@@ -109,7 +108,7 @@ export function ContentGenerationModal({
           
           toast({
             title: "Generation Complete",
-            description: `Generated ${status.blogs_generated}/${status.total_blogs_requested} blogs`,
+            description: `Generated ${status.blogs_generated}/${status.num_blogs_requested} blogs`,
           });
         }
       }
@@ -346,7 +345,7 @@ export function ContentGenerationModal({
                     <div className="grid grid-cols-2 gap-4 text-sm">
                       <div>
                         <span className="font-medium">Blogs Generated:</span>
-                        <span className="ml-2">{generationStatus.blogs_generated}/{generationStatus.total_blogs_requested}</span>
+                        <span className="ml-2">{generationStatus.blogs_generated}/{generationStatus.num_blogs_requested}</span>
                       </div>
                       <div>
                         <span className="font-medium">Status:</span>
