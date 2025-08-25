@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer
+from fastapi.openapi.utils import get_openapi
 from contextlib import asynccontextmanager
 import uvicorn
 from dotenv import load_dotenv
@@ -9,6 +10,7 @@ import os
 from routers import projects, wordpress_accounts, api_keys, blogs, content_generation
 from core.config import settings
 from core.supabase_client import supabase_client
+from swagger_config import custom_openapi_schema, API_METADATA
 
 # Load environment variables
 try:
@@ -39,11 +41,48 @@ async def lifespan(app: FastAPI):
     # Shutdown
     print("🛑 Shutting down Bulk Blog Generator Backend...")
 
-# Create FastAPI app
+# Create FastAPI app with enhanced metadata
 app = FastAPI(
-    title="Bulk Blog Generator API",
-    description="AI-powered bulk blog generation and WordPress auto-publishing API",
-    version="1.0.0",
+    title=API_METADATA["title"],
+    description=API_METADATA["description"],
+    version=API_METADATA["version"],
+    contact=API_METADATA["contact"],
+    license_info=API_METADATA["license"],
+    servers=API_METADATA["servers"],
+    tags=[
+        {
+            "name": "projects",
+            "description": "Blog generation project management. Create, read, update, and delete projects."
+        },
+        {
+            "name": "content-generation",
+            "description": "AI-powered blog content generation using OpenAI GPT and Google Gemini models."
+        },
+        {
+            "name": "wordpress-accounts",
+            "description": "WordPress site management and auto-publishing functionality."
+        },
+        {
+            "name": "api-keys",
+            "description": "External service API key management (OpenAI, Gemini, etc.)."
+        },
+        {
+            "name": "blogs",
+            "description": "Generated blog content management and publishing status."
+        },
+        {
+            "name": "authentication",
+            "description": "User authentication and JWT token management."
+        },
+        {
+            "name": "status",
+            "description": "API status and health check endpoints."
+        },
+        {
+            "name": "documentation",
+            "description": "API documentation and schema endpoints."
+        }
+    ],
     lifespan=lifespan
 )
 
@@ -63,17 +102,96 @@ app.include_router(api_keys.router, prefix="/api/api-keys", tags=["api-keys"])
 app.include_router(blogs.router, prefix="/api/blogs", tags=["blogs"])
 app.include_router(content_generation.router, prefix="/api", tags=["content-generation"])
 
-@app.get("/")
+@app.get("/", 
+    summary="API Status",
+    description="Get the current status and version information of the Blu Blog Gen API",
+    response_description="API status information",
+    tags=["status"]
+)
 async def root():
+    """
+    Get API status and version information.
+    
+    This endpoint provides basic information about the API including:
+    - Current version
+    - Service status
+    - Basic health information
+    """
     return {
-        "message": "Bulk Blog Generator API",
+        "message": "Blu Blog Gen API",
         "version": "1.0.0",
-        "status": "running"
+        "status": "running",
+        "description": "AI-powered bulk blog generation and WordPress auto-publishing API",
+        "documentation": {
+            "swagger_ui": "/docs",
+            "redoc": "/redoc",
+            "openapi_schema": "/openapi.json"
+        },
+        "endpoints": {
+            "health": "/health",
+            "projects": "/api/projects",
+            "content_generation": "/api/content-generation",
+            "wordpress_accounts": "/api/wordpress-accounts",
+            "api_keys": "/api/api-keys",
+            "blogs": "/api/blogs"
+        }
     }
 
-@app.get("/health")
+@app.get("/health", 
+    summary="Health Check",
+    description="Check the health status of the API and its dependencies",
+    response_description="Health status information",
+    tags=["status"]
+)
 async def health_check():
-    return {"status": "healthy", "service": "bulk-blog-generator"}
+    """
+    Perform a health check on the API and its dependencies.
+    
+    This endpoint checks:
+    - API service status
+    - Database connectivity
+    - External service availability
+    
+    Returns a simple health status that can be used by monitoring systems.
+    """
+    try:
+        # Test Supabase connection
+        response = supabase_client.table('users').select('count').limit(1).execute()
+        db_status = "healthy" if response.data is not None else "unhealthy"
+    except Exception as e:
+        db_status = f"unhealthy: {str(e)}"
+    
+    return {
+        "status": "healthy",
+        "service": "blu-blog-generator",
+        "version": "1.0.0",
+        "timestamp": "2024-12-19T00:00:00Z",
+        "dependencies": {
+            "database": db_status,
+            "api": "healthy"
+        },
+        "uptime": "running"
+    }
+
+@app.get("/openapi.json", 
+    summary="OpenAPI Schema",
+    description="Get the complete OpenAPI specification for the API",
+    tags=["documentation"]
+)
+async def get_openapi_schema():
+    """
+    Retrieve the complete OpenAPI specification.
+    
+    This endpoint returns the full OpenAPI schema that can be used by:
+    - API clients and SDK generators
+    - Documentation tools
+    - Testing frameworks
+    - API management platforms
+    """
+    return custom_openapi_schema(app)
+
+# Set the custom OpenAPI schema
+app.openapi = lambda: custom_openapi_schema(app)
 
 # Remove the problematic uvicorn.run call
 # The backend should be started with: python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000

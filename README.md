@@ -116,7 +116,10 @@ DEBUG=true
 #### Run Backend
 ```bash
 # Development mode with auto-reload
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+# Or using the startup script
+python start_server.py
 
 # Or using the main.py file
 python main.py
@@ -189,6 +192,38 @@ sudo systemctl start redis
 - **Storage**: File uploads, blog images, and generated content
 - **Real-time Updates**: Live progress tracking for content generation
 
+## 📚 API Documentation & Testing
+
+### Swagger UI (Interactive API Testing)
+
+Your backend includes comprehensive Swagger documentation for testing all API endpoints:
+
+- **URL**: `http://localhost:8000/docs`
+- **Features**: Interactive API testing, request/response examples, authentication
+- **Best for**: Testing endpoints, understanding API structure, debugging
+
+### Alternative Documentation Views
+
+- **ReDoc**: `http://localhost:8000/redoc` - Clean, responsive documentation
+- **OpenAPI Schema**: `http://localhost:8000/openapi.json` - Raw specification for code generation
+
+### Quick Start with Swagger
+
+1. **Start your backend**: `python start_server.py`
+2. **Open Swagger UI**: Navigate to `http://localhost:8000/docs`
+3. **Authorize**: Click "Authorize" and enter your JWT token
+4. **Test endpoints**: Use "Try it out" to test any API endpoint
+
+### Available API Endpoints
+
+- **Projects**: Create, manage, and track blog generation projects
+- **Content Generation**: AI-powered blog generation with progress tracking
+- **WordPress Integration**: Site management and auto-publishing
+- **API Key Management**: Secure storage of external service keys
+- **Blog Management**: View and manage generated content
+
+For detailed API testing instructions, see: [SWAGGER_GUIDE.md](./backend/SWAGGER_GUIDE.md)
+
 ## 🚀 Running the Complete System
 
 ### 1. Start All Services
@@ -198,7 +233,7 @@ redis-server
 
 # Terminal 2: Start Backend
 cd backend
-uvicorn main:app --reload
+python start_server.py
 
 # Terminal 3: Start Celery Worker
 cd backend
@@ -229,9 +264,9 @@ npm run dev
 - `DELETE /api/projects/{id}` - Delete project
 
 ### Content Generation
-- `POST /api/generate-content` - Generate blog content using AI
-- `POST /api/optimize-seo` - Optimize content for SEO
-- `POST /api/generate-images` - Generate AI-powered featured images
+- `POST /api/content-generation/generate` - Generate blog content using AI
+- `POST /api/content-generation/optimize-seo` - Optimize content for SEO
+- `POST /api/content-generation/generate-images` - Generate AI-powered featured images
 
 ### WordPress Integration
 - `POST /api/wordpress-accounts` - Add WordPress site
@@ -250,8 +285,9 @@ npm run lint         # Run ESLint
 
 ### Backend
 ```bash
-uvicorn main:app --reload    # Start with auto-reload
-python -m pytest             # Run tests
+python start_server.py                    # Start with enhanced startup script
+uvicorn main:app --reload                # Start with auto-reload
+python -m pytest                         # Run tests
 celery -A core.celery_app worker --loglevel=info  # Start worker
 ```
 
@@ -313,6 +349,11 @@ python -m pytest
 - Check Celery configuration in `core/celery_app.py`
 - Ensure all dependencies are installed
 
+#### Swagger Documentation Issues
+- Ensure backend is running on port 8000
+- Check browser console for errors
+- Verify CORS configuration
+
 ### Logs
 - **Frontend**: Check browser console and terminal
 - **Backend**: Check terminal output and logs
@@ -321,6 +362,7 @@ python -m pytest
 ## 📖 Additional Documentation
 
 - [Backend README](./backend/README.md) - Detailed backend setup
+- [Swagger Guide](./backend/SWAGGER_GUIDE.md) - API testing guide
 - [Supabase Setup](./SUPABASE_SETUP.md) - Database configuration
 - [Content Generation Service](./CONTENT_GENERATION_SERVICE.md) - AI service details
 - [Team Setup](./TEAM_SETUP.md) - Development workflow
@@ -341,6 +383,7 @@ This project is licensed under the MIT License.
 
 - **Issues**: Create GitHub issues for bugs/features
 - **Documentation**: Check the docs folder and README files
+- **API Testing**: Use the Swagger UI at `/docs`
 - **Team**: Contact the development team for internal support
 
 ---
