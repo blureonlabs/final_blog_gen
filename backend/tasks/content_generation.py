@@ -40,10 +40,19 @@ async def generate_blogs_task(
         }).eq("id", project_id).execute()
         
         # Log start of generation
-        await supabase.table("logs").insert({
-            "project_id": project_id,
-            "message": f"Started generating {num_blogs} blogs using {ai_model}",
-            "timestamp": "now()"
+        await supabase.table("activity_logs").insert({
+            "user_id": user_id,
+            "action": f"Started generating {num_blogs} blogs using {ai_model}",
+            "level": "info",
+            "category": "generation",
+            "timestamp": "now()",
+            "metadata": {
+                "details": {
+                    "project_id": project_id,
+                    "ai_model": ai_model,
+                    "num_blogs": num_blogs
+                }
+            }
         }).execute()
         
         # Generate blogs in batches
@@ -73,11 +82,11 @@ async def generate_blogs_task(
                     await _store_blog(project_id, blog_result["blog_data"], supabase)
                 else:
                     failed_blogs += 1
-                    await _log_error(project_id, blog_result["error"], supabase)
+                    await _log_error(project_id, blog_result["error"], supabase, user_id)
             
             # Update progress
             progress = int((blogs_generated / num_blogs) * 100)
-            await _update_project_progress(project_id, blogs_generated, num_blogs, progress, supabase)
+            await _update_project_progress(project_id, blogs_generated, num_blogs, progress, supabase, user_id)
             
             # Small delay between batches to avoid rate limiting
             if batch_end < num_blogs:
@@ -91,10 +100,20 @@ async def generate_blogs_task(
         }).eq("id", project_id).execute()
         
         # Log completion
-        await supabase.table("logs").insert({
-            "project_id": project_id,
-            "message": f"Blog generation completed: {blogs_generated} successful, {failed_blogs} failed",
-            "timestamp": "now()"
+        await supabase.table("activity_logs").insert({
+            "user_id": user_id,
+            "action": f"Blog generation completed: {blogs_generated} successful, {failed_blogs} failed",
+            "level": "info",
+            "category": "generation",
+            "timestamp": "now()",
+            "metadata": {
+                "details": {
+                    "project_id": project_id,
+                    "blogs_generated": blogs_generated,
+                    "failed_blogs": failed_blogs,
+                    "total_requested": num_blogs
+                }
+            }
         }).execute()
         
         logger.info(f"Blog generation completed for project {project_id}: {blogs_generated}/{num_blogs} successful")
@@ -116,10 +135,19 @@ async def generate_blogs_task(
         }).eq("id", project_id).execute()
         
         # Log error
-        await supabase.table("logs").insert({
-            "project_id": project_id,
-            "message": f"Blog generation failed: {str(e)}",
-            "timestamp": "now()"
+        await supabase.table("activity_logs").insert({
+            "user_id": user_id,
+            "action": f"Blog generation failed: {str(e)}",
+            "level": "error",
+            "category": "generation",
+            "timestamp": "now()",
+            "metadata": {
+                "details": {
+                    "project_id": project_id,
+                    "error": str(e),
+                    "ai_model": ai_model
+                }
+            }
         }).execute()
         
         return {
@@ -233,25 +261,35 @@ async def _store_blog(project_id: str, blog_data: Dict[str, Any], supabase) -> s
         logger.error(f"Error storing blog: {e}")
         raise
 
-async def _log_error(project_id: str, error_message: str, supabase):
+async def _log_error(project_id: str, error_message: str, supabase, user_id: str = None):
     """
     Log an error during blog generation
     """
-    try:
-        await supabase.table("logs").insert({
-            "project_id": project_id,
-            "message": f"Blog generation error: {error_message}",
-            "timestamp": "now()"
-        }).execute()
-    except Exception as e:
-        logger.error(f"Error logging error message: {e}")
+    if user_id:
+        try:
+            await supabase.table("activity_logs").insert({
+                "user_id": user_id,
+                "action": f"Blog generation error: {error_message}",
+                "level": "error",
+                "category": "generation",
+                "timestamp": "now()",
+                "metadata": {
+                    "details": {
+                        "project_id": project_id,
+                        "error_message": error_message
+                    }
+                }
+            }).execute()
+        except Exception as e:
+            logger.error(f"Error logging error message: {e}")
 
 async def _update_project_progress(
     project_id: str, 
     blogs_generated: int, 
     total_blogs: int, 
     progress: int, 
-    supabase
+    supabase,
+    user_id: str = None
 ):
     """
     Update project progress in the database
@@ -264,11 +302,22 @@ async def _update_project_progress(
         }).eq("id", project_id).execute()
         
         # Log progress update
-        await supabase.table("logs").insert({
-            "project_id": project_id,
-            "message": f"Progress: {blogs_generated}/{total_blogs} blogs generated ({progress}%)",
-            "timestamp": "now()"
-        }).execute()
+        if user_id:
+            await supabase.table("activity_logs").insert({
+                "user_id": user_id,
+                "action": f"Progress: {blogs_generated}/{total_blogs} blogs generated ({progress}%)",
+                "level": "info",
+                "category": "generation",
+                "timestamp": "now()",
+                "metadata": {
+                    "details": {
+                        "project_id": project_id,
+                        "blogs_generated": blogs_generated,
+                        "total_blogs": total_blogs,
+                        "progress_percentage": progress
+                    }
+                }
+            }).execute()
         
     except Exception as e:
         logger.error(f"Error updating project progress: {e}")

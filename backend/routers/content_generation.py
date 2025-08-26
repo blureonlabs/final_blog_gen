@@ -71,10 +71,19 @@ async def generate_blogs(
         }).eq("id", str(request.project_id)).execute()
         
         # Log the generation request
-        supabase.table("logs").insert({
-            "project_id": str(request.project_id),
-            "message": f"Started generating {request.num_blogs} blogs using {request.ai_model}",
-            "timestamp": "now()"
+        supabase.table("activity_logs").insert({
+            "user_id": str(current_user["id"]),
+            "action": f"Started generating {request.num_blogs} blogs using {request.ai_model}",
+            "level": "info",
+            "category": "generation",
+            "timestamp": "now()",
+            "metadata": {
+                "details": {
+                    "project_id": str(request.project_id),
+                    "ai_model": request.ai_model,
+                    "num_blogs": request.num_blogs
+                }
+            }
         }).execute()
         
         return BlogGenerationResponse(
@@ -185,18 +194,21 @@ async def generate_blogs_direct(
         }).eq("id", str(request.project_id)).execute()
         
         # Log the generation completion
-        # TODO: Create logs table or use alternative logging
-        # supabase.table("logs").insert({
-        #     "project_id": str(request.project_id),
-        #     "level": "info",
-        #     "category": "generation",
-        #     "message": f"Generated {len(generated_blogs)} blogs successfully using {request.ai_model}",
-        #     "metadata": {
-        #         "ai_model": request.ai_model,
-        #         "blogs_generated": len(generated_blogs),
-        #         "project_description": project_description
-        #     }
-        # }).execute()
+        supabase.table("activity_logs").insert({
+            "user_id": str(user_id),
+            "action": f"Generated {len(generated_blogs)} blogs successfully using {request.ai_model}",
+            "level": "info",
+            "category": "generation",
+            "timestamp": "now()",
+            "metadata": {
+                "details": {
+                    "project_id": str(request.project_id),
+                    "ai_model": request.ai_model,
+                    "blogs_generated": len(generated_blogs),
+                    "project_description": project_description
+                }
+            }
+        }).execute()
         
         return BlogGenerationResponse(
             project_id=request.project_id,

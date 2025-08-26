@@ -121,24 +121,6 @@ export function ProjectList({ projects, loading, onProjectSelect, onResume }: Pr
               <div className="flex items-center justify-between">
                 <CardTitle className="text-lg font-medium text-gray-900 truncate">{project.name}</CardTitle>
                 <div className="flex items-center space-x-2">
-                                     {(project.status === "in_progress" || project.status === "pending" || project.status === "ready") && (
-                     <button
-                       onClick={(e) => {
-                         e.stopPropagation()
-                         onResume(project)
-                       }}
-                       className={`p-2 rounded-full transition-colors ${
-                         project.status === "ready" || project.status === "pending"
-                           ? "bg-green-100 hover:bg-green-200" 
-                           : "bg-blue-100 hover:bg-blue-200"
-                       }`}
-                       title={project.status === "ready" || project.status === "pending" ? "Start Content Generation" : "Resume Content Generation"}
-                     >
-                       <PlayCircle className={`h-4 w-4 ${
-                         project.status === "ready" || project.status === "pending" ? "text-green-600" : "text-blue-600"
-                       }`} />
-                     </button>
-                   )}
                   {getStatusIcon(project.status)}
                 </div>
               </div>
