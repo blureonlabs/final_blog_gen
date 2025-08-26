@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     # Supabase settings
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
     SUPABASE_ANON_KEY: str = os.getenv("SUPABASE_ANON_KEY", "")
+    SUPABASE_SERVICE_ROLE_KEY: Optional[str] = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    
+    # Database settings
+    DATABASE_URL: Optional[str] = os.getenv("DATABASE_URL")
     
     # CORS settings
     ALLOWED_ORIGINS: list = [
@@ -44,6 +48,8 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+        # Allow extra fields to prevent validation errors
+        extra = "allow"
 
 # Create settings instance
 settings = Settings()
