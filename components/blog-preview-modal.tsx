@@ -36,18 +36,29 @@ export function BlogPreviewModal({ blog, onClose }: BlogPreviewModalProps) {
       // If we already have content, don't fetch again
       if (blogContent) return
       
-             // Fetch content regardless of status for preview purposes
-       // if (blog.status !== "ready") return
+      console.log("🔍 Fetching blog content for blog ID:", blog.id)
+      console.log("🔍 Blog status:", blog.status)
+      console.log("🔍 Blog object:", blog)
       
       setIsLoadingContent(true)
       setContentError(null)
       
       try {
         const response = await fetch(`http://localhost:8000/api/content-generation/blog/${blog.id}/public`)
+        console.log("📡 Response status:", response.status)
+        console.log("📡 Response headers:", response.headers)
+        
         if (response.ok) {
           const blogData = await response.json()
+          console.log("📝 Fetched blog data:", blogData)
+          console.log("📝 Content length:", blogData.content ? blogData.content.length : 0)
+          console.log("📝 Content preview:", blogData.content ? blogData.content.substring(0, 100) + "..." : "No content")
+          
           setBlogContent(blogData.content || "No content available")
         } else {
+          const errorText = await response.text()
+          console.error("❌ Failed to fetch blog:", response.status, response.statusText)
+          console.error("❌ Error response:", errorText)
           setContentError("Failed to load blog content")
         }
       } catch (error) {
@@ -139,6 +150,7 @@ export function BlogPreviewModal({ blog, onClose }: BlogPreviewModalProps) {
 
           {/* Blog Content */}
           <div className="prose max-w-none">
+            <h3 className="font-medium text-gray-900 mb-4">Blog Content</h3>
             {isLoadingContent ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="h-8 w-8 animate-spin text-blue-600 mr-3" />
@@ -157,11 +169,14 @@ export function BlogPreviewModal({ blog, onClose }: BlogPreviewModalProps) {
               </div>
             ) : blogContent ? (
               <div
-                className="text-gray-800 leading-relaxed whitespace-pre-wrap"
+                className="text-gray-800 leading-relaxed whitespace-pre-wrap bg-white p-6 border border-gray-200 rounded-lg"
                 dangerouslySetInnerHTML={{ __html: blogContent.replace(/\n/g, "<br>") }}
               />
             ) : (
-              <p className="text-gray-600 italic">No content available</p>
+              <div className="text-center py-8 bg-gray-50 rounded-lg border border-gray-200">
+                <p className="text-gray-600 italic">No content available</p>
+                <p className="text-sm text-gray-500 mt-2">The blog content could not be loaded.</p>
+              </div>
             )}
           </div>
         </CardContent>

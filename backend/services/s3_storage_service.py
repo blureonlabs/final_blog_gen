@@ -60,19 +60,21 @@ class S3StorageService:
             logger.error(f"❌ Error storing blog content in S3: {e}")
             return {"success": False, "error": str(e)}
     
-    def retrieve_blog_content(self, storage_path: str) -> Optional[Dict[str, Any]]:
+    def retrieve_blog_content(self, storage_path: str, bucket_name: str = None) -> Optional[Dict[str, Any]]:
         """Retrieve blog content from S3 bucket"""
         try:
-            logger.info(f"🔍 S3StorageService.retrieve_blog_content called with: {storage_path}")
+            logger.info(f"🔍 S3StorageService.retrieve_blog_content called with: {storage_path}, bucket: {bucket_name}")
             if not self.s3_client:
                 logger.error("❌ S3 client not initialized")
                 raise Exception("S3 client not initialized")
             
-            logger.info(f"🔍 Attempting to retrieve from bucket: {self.bucket_name}, key: {storage_path}")
+            # Use provided bucket name or fallback to default
+            target_bucket = bucket_name or self.bucket_name
+            logger.info(f"🔍 Attempting to retrieve from bucket: {target_bucket}, key: {storage_path}")
             
             # Download content from S3
             response = self.s3_client.get_object(
-                Bucket=self.bucket_name,
+                Bucket=target_bucket,
                 Key=storage_path
             )
             

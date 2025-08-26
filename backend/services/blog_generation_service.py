@@ -548,11 +548,46 @@ class BlogGenerationService:
         try:
             logger.info(f"🔍 get_blog_content called with storage_path: {storage_path}, bucket_name: {bucket_name}")
             
+            # Normalize bucket name - treat 's3-blog-content' as 'blog-content'
+            if bucket_name == "s3-blog-content":
+                bucket_name = "blog-content"
+                logger.info(f"🔄 Normalized bucket name from 's3-blog-content' to 'blog-content'")
+            
+            # If it's a Supabase storage bucket, try Supabase storage first
+            if bucket_name == "blog-content":
+                logger.info(f"🔍 Attempting Supabase storage for bucket: {bucket_name}")
+                try:
+                    # Download content from Supabase storage
+                    result = supabase_client.storage.from_(bucket_name).download(storage_path)
+                    
+                    if result:
+                        # Parse JSON content
+                        content_data = json.loads(result.decode('utf-8'))
+                        logger.info(f"✅ Retrieved content from Supabase storage: {bucket_name}/{storage_path}")
+                        return content_data
+                    else:
+                        raise Exception(f"Failed to retrieve content from Supabase storage: {bucket_name}/{storage_path}")
+                        
+                except Exception as supabase_error:
+                    logger.warning(f"⚠️ Supabase storage failed: {supabase_error}")
+                    # Fall back to S3 if Supabase fails
+                    logger.info("🔄 Falling back to S3 storage...")
+                    try:
+                        content_data = self.s3_storage.retrieve_blog_content(storage_path, bucket_name)
+                        if content_data:
+                            return content_data
+                        else:
+                            raise Exception("S3 also failed")
+                    except Exception as s3_error:
+                        logger.error(f"❌ Both Supabase and S3 storage failed")
+                        # Final fallback to database content
+                        return {"content": "Storage retrieval failed, using database fallback", "storage_type": "database_fallback", "error": f"Supabase: {supabase_error}, S3: {s3_error}"}
+            
             # If it's an S3 storage path, retrieve from S3
-            if bucket_name == "s3-blog-content" or storage_path.startswith("blogs/"):
+            elif storage_path.startswith("blogs/"):
                 logger.info(f"🔍 Retrieving content from S3: {storage_path}")
                 try:
-                    content_data = self.s3_storage.retrieve_blog_content(storage_path)
+                    content_data = self.s3_storage.retrieve_blog_content(storage_path, bucket_name)
                     logger.info(f"🔍 S3 retrieval result: {content_data}")
                     if content_data:
                         return content_data

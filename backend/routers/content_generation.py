@@ -348,32 +348,59 @@ async def get_blog_public(
     Get a specific blog by ID with content from storage (public access, no authentication required)
     """
     try:
+        logger.info(f"🔍 Fetching blog {blog_id} from database...")
+        
         # Get blog without user validation (public access)
         blog_response = supabase.table("blogs").select("*").eq("id", str(blog_id)).execute()
         
+        logger.info(f"📊 Database response: {blog_response.data}")
+        
         if not blog_response.data:
+            logger.warning(f"❌ Blog {blog_id} not found in database")
             raise HTTPException(status_code=404, detail="Blog not found")
         
         blog = blog_response.data[0]
+        logger.info(f"📝 Found blog: {blog.get('title', 'No title')}")
+        logger.info(f"📝 Blog keys: {list(blog.keys())}")
         
         # Retrieve content from storage
         try:
-            content_data = blog_generation_service.get_blog_content(
-                storage_path=blog["storage_path"],
-                bucket_name=blog.get("storage_bucket", "blog-content")
-            )
+            storage_path = blog.get("storage_path")
+            bucket_name = blog.get("storage_bucket", "blog-content")
             
-            # Extract content from storage data
-            content = content_data.get("content", "")
-            prompt = content_data.get("prompt", blog.get("prompt", ""))
-            ai_model = content_data.get("ai_model", blog.get("ai_model", ""))
+            logger.info(f"🔍 Attempting to retrieve from storage: {bucket_name}/{storage_path}")
             
+            if storage_path and bucket_name:
+                content_data = blog_generation_service.get_blog_content(
+                    storage_path=storage_path,
+                    bucket_name=bucket_name
+                )
+                
+                # Extract content from storage data
+                content = content_data.get("content", "")
+                prompt = content_data.get("prompt", blog.get("prompt", ""))
+                ai_model = content_data.get("ai_model", blog.get("ai_model", ""))
+                
+                logger.info(f"📝 Retrieved content from storage, length: {len(content)}")
+                
+            else:
+                logger.warning(f"⚠️ No storage path or bucket for blog {blog_id}")
+                content = blog.get("content", "")  # Fallback to database content
+                prompt = blog.get("prompt", "")
+                ai_model = blog.get("ai_model", "")
+                
         except Exception as storage_error:
             logger.warning(f"Could not retrieve content from storage: {storage_error}")
-            # Fallback to metadata only
-            content = ""
+            # Fallback to database content if available
+            content = blog.get("content", "")
             prompt = blog.get("prompt", "")
             ai_model = blog.get("ai_model", "")
+            logger.info(f"🔄 Using database fallback content, length: {len(content) if content else 0}")
+        
+        # Log what we found for debugging
+        logger.info(f"📝 Blog {blog_id} final content length: {len(content) if content else 0}")
+        logger.info(f"📝 Blog {blog_id} has content: {bool(content)}")
+        logger.info(f"📝 Blog {blog_id} content preview: {content[:100] if content else 'No content'}...")
         
         return BlogResponse(
             id=blog["id"],

@@ -44,7 +44,7 @@ class BlogResponse(BaseModel):
     id: UUID
     project_id: UUID
     title: Optional[str] = None
-    # content field removed - content is now stored in Supabase Storage
+    content: Optional[str] = None  # Content from database
     prompt: str
     ai_model: str
     ai_model_version: Optional[str] = None
