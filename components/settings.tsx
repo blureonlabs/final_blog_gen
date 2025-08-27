@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -12,6 +12,23 @@ interface SettingsProps {
   onUpdate: () => void
 }
 
+// Debounce hook for input fields
+function useDebounce<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value)
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value)
+    }, delay)
+
+    return () => {
+      clearTimeout(handler)
+    }
+  }, [value, delay])
+
+  return debouncedValue
+}
+
 export function Settings({ onUpdate }: SettingsProps) {
   const [userData, setUserData] = useState<UserData | null>(null)
   const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({})
@@ -20,7 +37,17 @@ export function Settings({ onUpdate }: SettingsProps) {
   const [showAddForm, setShowAddForm] = useState(false)
   const [editingAccount, setEditingAccount] = useState<string | null>(null)
   const [showAddApiKeyForm, setShowAddApiKeyForm] = useState<string | null>(null)
+  const [newApiKeyName, setNewApiKeyName] = useState("")
+  const [newApiKeyValue, setNewApiKeyValue] = useState("")
+  const [newWordPressName, setNewWordPressName] = useState("")
+  const [newWordPressUrl, setNewWordPressUrl] = useState("")
+  const [newWordPressUsername, setNewWordPressUsername] = useState("")
+  const [newWordPressPassword, setNewWordPressPassword] = useState("")
   const [isDemoMode, setIsDemoMode] = useState(false)
+  
+  // Local state for editing - prevents immediate API calls
+  const [editingApiKeys, setEditingApiKeys] = useState<Record<string, APIKey>>({})
+  const [editingWordPressAccounts, setEditingWordPressAccounts] = useState<Record<string, WordPressAccount>>({})
 
   useEffect(() => {
     const fetchData = async () => {
@@ -45,6 +72,9 @@ export function Settings({ onUpdate }: SettingsProps) {
     try {
       const data = await supabaseApi.getUserData()
       setUserData(data)
+      // Reset editing states when refreshing
+      setEditingApiKeys({})
+      setEditingWordPressAccounts({})
       onUpdate()
     } catch (error) {
       console.error("Error refreshing user data:", error)
@@ -54,13 +84,69 @@ export function Settings({ onUpdate }: SettingsProps) {
 
   const handleSave = async () => {
     setSaving(true)
+    setMessage("") // Clear any previous messages
+    
     try {
-      // No need to save userData - it's already saved to Supabase
+      console.log("Starting save process...")
+      console.log("Editing API keys:", editingApiKeys)
+      console.log("Editing WordPress accounts:", editingWordPressAccounts)
+      
+      // Check if we're in demo mode
+      if (isDemoMode) {
+        setMessage("Demo mode: Cannot save changes without database connection")
+        setSaving(false)
+        return
+      }
+      
+      // Save all pending changes
+      const promises = []
+      
+      // Save API key changes
+      for (const [keyId, apiKey] of Object.entries(editingApiKeys)) {
+        console.log(`Saving API key ${keyId}:`, apiKey)
+        
+        // Add individual timeout for each API key save
+        const apiKeySavePromise = supabaseApi.updateAPIKey(keyId, apiKey)
+        const apiKeyTimeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error(`API key save timed out for ${keyId}`)), 15000)
+        })
+        
+        promises.push(Promise.race([apiKeySavePromise, apiKeyTimeoutPromise]))
+      }
+      
+      // Save WordPress account changes
+      for (const [accountId, account] of Object.entries(editingWordPressAccounts)) {
+        console.log(`Saving WordPress account ${accountId}:`, account)
+        promises.push(supabaseApi.updateWordPressAccount(accountId, account))
+      }
+      
+      if (promises.length > 0) {
+        console.log(`Executing ${promises.length} save operations...`)
+        await Promise.all(promises)
+        console.log("All save operations completed successfully")
+      } else {
+        console.log("No changes to save")
+      }
+      
       setMessage("Settings saved successfully!")
-      refreshData()
+      
+      // Clear editing states after successful save
+      setEditingApiKeys({})
+      setEditingWordPressAccounts({})
+      
+      // Refresh data to show updated values
+      await refreshData()
     } catch (error) {
       console.error("Error saving user data:", error)
-      setMessage("Error saving settings")
+      if (error instanceof Error) {
+        if (error.message === 'Supabase not configured') {
+          setMessage("Error: Database connection not configured. Please check your environment settings.")
+        } else {
+          setMessage(`Error saving settings: ${error.message}`)
+        }
+      } else {
+        setMessage("Error saving settings: Unknown error occurred")
+      }
     } finally {
       setSaving(false)
     }
@@ -73,13 +159,64 @@ export function Settings({ onUpdate }: SettingsProps) {
     }))
   }
 
-  const addApiKey = async (service: "openai" | "gemini" | "serp") => {
+  // Handle API key input changes with local state
+  const handleApiKeyChange = (keyId: string, field: keyof APIKey, value: string | boolean) => {
     if (!userData) return
+    
+    const originalKey = userData.apiKeys.find(k => k.id === keyId)
+    if (!originalKey) return
+    
+    setEditingApiKeys(prev => ({
+      ...prev,
+      [keyId]: {
+        ...originalKey,
+        ...prev[keyId],
+        [field]: value
+      }
+    }))
+  }
+
+  // Handle WordPress account input changes with local state
+  const handleWordPressAccountChange = (accountId: string, field: keyof WordPressAccount, value: string) => {
+    if (!userData) return
+    
+    const originalAccount = userData.wordpressAccounts.find(a => a.id === accountId)
+    if (!originalAccount) return
+    
+    setEditingWordPressAccounts(prev => ({
+      ...prev,
+      [accountId]: {
+        ...originalAccount,
+        ...prev[accountId],
+        [field]: value
+      }
+    }))
+  }
+
+  // Get the current value (either edited or original)
+  const getApiKeyValue = (keyId: string, field: keyof APIKey) => {
+    if (editingApiKeys[keyId] && editingApiKeys[keyId][field] !== undefined) {
+      return editingApiKeys[keyId][field]
+    }
+    const originalKey = userData?.apiKeys.find(k => k.id === keyId)
+    return originalKey?.[field] || ""
+  }
+
+  const getWordPressAccountValue = (accountId: string, field: keyof WordPressAccount) => {
+    if (editingWordPressAccounts[accountId] && editingWordPressAccounts[accountId][field] !== undefined) {
+      return editingWordPressAccounts[accountId][field]
+    }
+    const originalAccount = userData?.wordpressAccounts.find(a => a.id === accountId)
+    return originalAccount?.[field] || ""
+  }
+
+  const addApiKey = async (service: "openai" | "gemini" | "serp") => {
+    if (!userData || !newApiKeyName || !newApiKeyValue) return
     
     try {
       const newKey = await supabaseApi.addAPIKey({
-        name: `${service.charAt(0).toUpperCase() + service.slice(1)} Key ${userData.apiKeys.filter((k) => k.service === service).length + 1}`,
-        api_key: "",
+        name: newApiKeyName,
+        api_key: newApiKeyValue,
         service,
         is_default: userData.apiKeys.filter((k) => k.service === service).length === 0,
       })
@@ -87,6 +224,9 @@ export function Settings({ onUpdate }: SettingsProps) {
       setMessage(`${service.charAt(0).toUpperCase() + service.slice(1)} key added successfully!`)
       refreshData()
       setShowAddApiKeyForm(null)
+      // Clear the form
+      setNewApiKeyName("")
+      setNewApiKeyValue("")
     } catch (error) {
       console.error("Error adding API key:", error)
       if (error instanceof Error && error.message === 'Supabase not configured') {
@@ -114,6 +254,12 @@ export function Settings({ onUpdate }: SettingsProps) {
   const deleteApiKey = async (keyId: string) => {
     try {
       await supabaseApi.deleteAPIKey(keyId)
+      // Remove from editing state if it exists
+      setEditingApiKeys(prev => {
+        const newState = { ...prev }
+        delete newState[keyId]
+        return newState
+      })
       setMessage("API key deleted successfully!")
       refreshData()
     } catch (error) {
@@ -156,18 +302,22 @@ export function Settings({ onUpdate }: SettingsProps) {
   }
 
   const addWordPressAccount = async () => {
-    if (!userData) return
+    if (!userData || !newWordPressName || !newWordPressUrl || !newWordPressUsername || !newWordPressPassword) return
     
     try {
       const newAccount = await supabaseApi.addWordPressAccount({
-        name: `WordPress Site ${userData.wordpressAccounts.length + 1}`,
-        site_url: "",
-        username: "",
-        password: "",
+        name: newWordPressName,
+        site_url: newWordPressUrl,
+        username: newWordPressUsername,
+        password: newWordPressPassword,
       })
 
-      setEditingAccount(newAccount.id)
       setShowAddForm(false)
+      // Clear the form
+      setNewWordPressName("")
+      setNewWordPressUrl("")
+      setNewWordPressUsername("")
+      setNewWordPressPassword("")
       setMessage("WordPress account added successfully!")
       refreshData()
     } catch (error) {
@@ -196,6 +346,12 @@ export function Settings({ onUpdate }: SettingsProps) {
       if (editingAccount === id) {
         setEditingAccount(null)
       }
+      // Remove from editing state if it exists
+      setEditingWordPressAccounts(prev => {
+        const newState = { ...prev }
+        delete newState[id]
+        return newState
+      })
       setMessage("WordPress account deleted successfully!")
       refreshData()
     } catch (error) {
@@ -207,6 +363,9 @@ export function Settings({ onUpdate }: SettingsProps) {
   const getApiKeysByService = (service: string) => {
     return userData?.apiKeys.filter((key) => key.service === service) || []
   }
+
+  // Check if there are unsaved changes
+  const hasUnsavedChanges = Object.keys(editingApiKeys).length > 0 || Object.keys(editingWordPressAccounts).length > 0
 
   if (!userData) {
     return (
@@ -260,12 +419,19 @@ export function Settings({ onUpdate }: SettingsProps) {
                 <div key={service} className="space-y-3">
                   <div className="flex items-center justify-between">
                     <h4 className="font-medium text-gray-900">{config.name}</h4>
-                    <Button
-                      onClick={() => setShowAddApiKeyForm(service)}
-                      variant="outline"
-                      size="sm"
-                      className="border-gray-300 text-gray-700 hover:bg-gray-50"
-                    >
+                                         <Button
+                       onClick={() => {
+                         setShowAddApiKeyForm(service)
+                         // Clear the form when opening
+                         setNewApiKeyName("")
+                         setNewApiKeyValue("")
+                         // Clear any previous messages
+                         setMessage("")
+                       }}
+                       variant="outline"
+                       size="sm"
+                       className="border-gray-300 text-gray-700 hover:bg-gray-50"
+                     >
                       <Plus className="h-4 w-4 mr-2" />
                       Add Key
                     </Button>
@@ -283,8 +449,8 @@ export function Settings({ onUpdate }: SettingsProps) {
                             <Input
                               type="text"
                               placeholder="Key name (e.g., Production Key)"
-                              value={apiKey.name}
-                              onChange={(e) => updateApiKey(apiKey.id, "name", e.target.value)}
+                              value={getApiKeyValue(apiKey.id, "name") as string}
+                              onChange={(e) => handleApiKeyChange(apiKey.id, "name", e.target.value)}
                               className="bg-gray-50 border-gray-300 flex-1"
                             />
                             <Button
@@ -312,8 +478,8 @@ export function Settings({ onUpdate }: SettingsProps) {
                             <Input
                               type={showPasswords[`${service}_${apiKey.id}`] ? "text" : "password"}
                               placeholder={config.placeholder}
-                              value={apiKey.api_key}
-                              onChange={(e) => updateApiKey(apiKey.id, "api_key", e.target.value)}
+                              value={getApiKeyValue(apiKey.id, "api_key") as string}
+                              onChange={(e) => handleApiKeyChange(apiKey.id, "api_key", e.target.value)}
                               className="bg-gray-50 border-gray-300 pr-10"
                             />
                             <button
@@ -343,23 +509,51 @@ export function Settings({ onUpdate }: SettingsProps) {
                     <div className="border border-gray-200 rounded-lg p-3 bg-gray-50">
                       <div className="flex items-center justify-between mb-2">
                         <h5 className="font-medium text-gray-900">Add New {config.name} Key</h5>
-                        <Button
-                          onClick={() => setShowAddApiKeyForm(null)}
-                          variant="ghost"
-                          size="sm"
-                          className="text-gray-500 hover:text-gray-700"
-                        >
+                                                 <Button
+                           onClick={() => {
+                             setShowAddApiKeyForm(null)
+                             // Clear the form when canceling
+                             setNewApiKeyName("")
+                             setNewApiKeyValue("")
+                             // Clear any previous messages
+                             setMessage("")
+                           }}
+                           variant="ghost"
+                           size="sm"
+                           className="text-gray-500 hover:text-gray-700"
+                         >
                           <X className="h-4 w-4 mr-2" />
                           Cancel
                         </Button>
                       </div>
-                      <Button
-                        onClick={() => addApiKey(service as "openai" | "gemini" | "serp")}
-                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
-                      >
-                        <Plus className="h-4 w-4 mr-2" />
-                        Create {config.name} Key
-                      </Button>
+                      <div className="space-y-3">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Key Name</label>
+                          <input
+                            type="text"
+                            placeholder={`${config.name} Key ${userData?.apiKeys.filter((k) => k.service === service).length + 1}`}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            onChange={(e) => setNewApiKeyName(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">API Key</label>
+                          <input
+                            type="password"
+                            placeholder={config.placeholder}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            onChange={(e) => setNewApiKeyValue(e.target.value)}
+                          />
+                        </div>
+                        <Button
+                          onClick={() => addApiKey(service as "openai" | "gemini" | "serp")}
+                          disabled={!newApiKeyName || !newApiKeyValue}
+                          className="w-full bg-indigo-600 hover:bg-indigo-700 text-white disabled:bg-gray-400 disabled:cursor-not-allowed"
+                        >
+                          <Plus className="h-4 w-4 mr-2" />
+                          Create {config.name} Key
+                        </Button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -377,12 +571,21 @@ export function Settings({ onUpdate }: SettingsProps) {
                   Manage multiple WordPress sites for automatic publishing
                 </CardDescription>
               </div>
-              <Button
-                onClick={() => setShowAddForm(true)}
-                variant="outline"
-                size="sm"
-                className="border-gray-300 text-gray-700 hover:bg-gray-50"
-              >
+                             <Button
+                 onClick={() => {
+                   setShowAddForm(true)
+                   // Clear the form when opening
+                   setNewWordPressName("")
+                   setNewWordPressUrl("")
+                   setNewWordPressUsername("")
+                   setNewWordPressPassword("")
+                   // Clear any previous messages
+                   setMessage("")
+                 }}
+                 variant="outline"
+                 size="sm"
+                 className="border-gray-300 text-gray-700 hover:bg-gray-50"
+               >
                 <Plus className="h-4 w-4 mr-2" />
                 Add Account
               </Button>
@@ -392,11 +595,20 @@ export function Settings({ onUpdate }: SettingsProps) {
             {userData?.wordpressAccounts.length === 0 ? (
               <div className="text-center py-8 text-gray-500">
                 <p>No WordPress accounts configured</p>
-                <Button
-                  onClick={addWordPressAccount}
-                  variant="outline"
-                  className="mt-4 border-gray-300 text-gray-700 hover:bg-gray-50 bg-transparent"
-                >
+                                 <Button
+                   onClick={() => {
+                     setShowAddForm(true)
+                     // Clear the form when opening
+                     setNewWordPressName("")
+                     setNewWordPressUrl("")
+                     setNewWordPressUsername("")
+                     setNewWordPressPassword("")
+                     // Clear any previous messages
+                     setMessage("")
+                   }}
+                   variant="outline"
+                   className="mt-4 border-gray-300 text-gray-700 hover:bg-gray-50 bg-transparent"
+                 >
                   <Plus className="h-4 w-4 mr-2" />
                   Add Your First Account
                 </Button>
@@ -434,8 +646,8 @@ export function Settings({ onUpdate }: SettingsProps) {
                           <Input
                             type="text"
                             placeholder="My WordPress Site"
-                            value={account.name}
-                            onChange={(e) => updateWordPressAccount(account.id, "name", e.target.value)}
+                            value={getWordPressAccountValue(account.id, "name") as string}
+                            onChange={(e) => handleWordPressAccountChange(account.id, "name", e.target.value)}
                             className="bg-gray-50 border-gray-300"
                           />
                         </div>
@@ -444,8 +656,8 @@ export function Settings({ onUpdate }: SettingsProps) {
                           <Input
                             type="url"
                             placeholder="https://yoursite.com"
-                            value={account.site_url}
-                            onChange={(e) => updateWordPressAccount(account.id, "site_url", e.target.value)}
+                            value={getWordPressAccountValue(account.id, "site_url") as string}
+                            onChange={(e) => handleWordPressAccountChange(account.id, "site_url", e.target.value)}
                             className="bg-gray-50 border-gray-300"
                           />
                         </div>
@@ -454,8 +666,8 @@ export function Settings({ onUpdate }: SettingsProps) {
                           <Input
                             type="text"
                             placeholder="admin"
-                            value={account.username}
-                            onChange={(e) => updateWordPressAccount(account.id, "username", e.target.value)}
+                            value={getWordPressAccountValue(account.id, "username") as string}
+                            onChange={(e) => handleWordPressAccountChange(account.id, "username", e.target.value)}
                             className="bg-gray-50 border-gray-300"
                           />
                         </div>
@@ -465,8 +677,8 @@ export function Settings({ onUpdate }: SettingsProps) {
                             <Input
                               type={showPasswords[`wp_${account.id}`] ? "text" : "password"}
                               placeholder="xxxx xxxx xxxx xxxx xxxx xxxx"
-                              value={account.password}
-                              onChange={(e) => updateWordPressAccount(account.id, "password", e.target.value)}
+                              value={getWordPressAccountValue(account.id, "password") as string}
+                              onChange={(e) => handleWordPressAccountChange(account.id, "password", e.target.value)}
                               className="bg-gray-50 border-gray-300 pr-10"
                             />
                             <button
@@ -505,20 +717,74 @@ export function Settings({ onUpdate }: SettingsProps) {
               <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
                 <div className="flex items-center justify-between mb-3">
                   <h4 className="font-medium text-gray-900">Add New WordPress Account</h4>
-                  <Button
-                    onClick={() => setShowAddForm(false)}
-                    variant="ghost"
-                    size="sm"
-                    className="text-gray-500 hover:text-gray-700"
-                  >
+                                     <Button
+                     onClick={() => {
+                       setShowAddForm(false)
+                       // Clear the form when canceling
+                       setNewWordPressName("")
+                       setNewWordPressUrl("")
+                       setNewWordPressUsername("")
+                       setNewWordPressPassword("")
+                       // Clear any previous messages
+                       setMessage("")
+                     }}
+                     variant="ghost"
+                     size="sm"
+                     className="text-gray-500 hover:text-gray-700"
+                   >
                     <X className="h-4 w-4 mr-2" />
                     Cancel
                   </Button>
                 </div>
-                <Button onClick={addWordPressAccount} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white">
-                  <Plus className="h-4 w-4 mr-2" />
-                  Create Account
-                </Button>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Account Name</label>
+                    <input
+                      type="text"
+                      placeholder="My WordPress Site"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      onChange={(e) => setNewWordPressName(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Site URL</label>
+                    <input
+                      type="url"
+                      placeholder="https://yoursite.com"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      onChange={(e) => setNewWordPressUrl(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
+                    <input
+                      type="text"
+                      placeholder="admin"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      onChange={(e) => setNewWordPressUsername(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Application Password</label>
+                    <input
+                      type="password"
+                      placeholder="xxxx xxxx xxxx xxxx xxxx xxxx"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      onChange={(e) => setNewWordPressPassword(e.target.value)}
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Generate an application password in your WordPress admin under Users → Profile
+                    </p>
+                  </div>
+                  <Button 
+                    onClick={addWordPressAccount} 
+                    disabled={!newWordPressName || !newWordPressUrl || !newWordPressUsername || !newWordPressPassword}
+                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white disabled:bg-gray-400 disabled:cursor-not-allowed"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Create WordPress Account
+                  </Button>
+                </div>
               </div>
             )}
           </CardContent>
@@ -530,8 +796,15 @@ export function Settings({ onUpdate }: SettingsProps) {
             {message && (
               <p className={`text-sm ${message.includes("Error") ? "text-red-600" : "text-green-600"}`}>{message}</p>
             )}
+            {hasUnsavedChanges && (
+              <p className="text-sm text-amber-600">You have unsaved changes. Click Save to apply them.</p>
+            )}
           </div>
-          <Button onClick={handleSave} disabled={saving} className="bg-gray-800 hover:bg-gray-700 text-white">
+          <Button 
+            onClick={handleSave} 
+            disabled={saving || !hasUnsavedChanges} 
+            className="bg-gray-800 hover:bg-gray-700 text-white disabled:bg-gray-400 disabled:cursor-not-allowed"
+          >
             <Check className="h-4 w-4 mr-2" />
             {saving ? "Saving..." : "Save Settings"}
           </Button>

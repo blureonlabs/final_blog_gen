@@ -3,7 +3,7 @@ import { supabase } from './supabase'
 export interface LogEntry {
   user_id: string
   action: string
-  level: 'info' | 'warning' | 'error'
+  level: 'success' | 'info' | 'warning' | 'error'
   category: string
   timestamp?: string
   metadata?: {
@@ -13,7 +13,11 @@ export interface LogEntry {
 }
 
 class SupabaseLogger {
-  async info(category: string, action: string, options?: { details?: any; [key: string]: any }) {
+  async success(category: string, action: string, options?: { details?: any; [key: string]: any }) {
+    return this.log('success', category, action, options)
+  }
+
+  async info(category: string, action: string, options?: { details?: string; [key: string]: any }) {
     return this.log('info', category, action, options)
   }
 
@@ -25,7 +29,7 @@ class SupabaseLogger {
     return this.log('error', category, action, options)
   }
 
-  private async log(level: 'info' | 'warning' | 'error', category: string, action: string, options?: { details?: any; [key: string]: any }) {
+  private async log(level: 'success' | 'info' | 'warning' | 'error', category: string, action: string, options?: { details?: any; [key: string]: any }) {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       
@@ -41,13 +45,9 @@ class SupabaseLogger {
         category,
         timestamp: new Date().toISOString(),
         metadata: {
-          details: options?.details || null,
-          ...options
+          details: options?.details || null
         }
       }
-
-      // Remove details from options to avoid duplication
-      delete logEntry.metadata!.details
 
       const { data, error } = await supabase
         .from('activity_logs')

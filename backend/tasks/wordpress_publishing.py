@@ -6,8 +6,12 @@ from datetime import datetime
 
 from core.supabase_client import supabase_client
 from models.blog import BlogStatus
+from services.s3_storage_service import S3StorageService
 
 logger = logging.getLogger(__name__)
+
+# Initialize S3 storage service
+s3_storage = S3StorageService()
 
 @shared_task(bind=True, name="publish_to_wordpress")
 def publish_to_wordpress_task(self, blog_id: str, wordpress_account_id: str, 
@@ -26,22 +30,43 @@ def publish_to_wordpress_task(self, blog_id: str, wordpress_account_id: str,
         # Get blog data
         blog_data = get_blog_data(blog_id)
         if not blog_data:
-            logger.error(f"Blog {blog_id} not found")
-            return
+            logger.error(f"❌ Blog {blog_id} not found or content unavailable")
+            update_blog_status(blog_id, BlogStatus.FAILED, "Blog content not found or unavailable")
+            return {
+                "blog_id": blog_id,
+                "status": "failed",
+                "error": "Blog content not found or unavailable"
+            }
         
         # Get WordPress account data
         wp_account = get_wordpress_account(wordpress_account_id)
         if not wp_account:
-            logger.error(f"WordPress account {wordpress_account_id} not found")
-            return
+            logger.error(f"❌ WordPress account {wordpress_account_id} not found")
+            update_blog_status(blog_id, BlogStatus.FAILED, "WordPress account not found")
+            return {
+                "blog_id": blog_id,
+                "status": "failed",
+                "error": "WordPress account not found"
+            }
         
         # Update status to publishing
         update_blog_status(blog_id, BlogStatus.PUBLISHING)
         
         # Prepare post data for WordPress
         post_data = prepare_wordpress_post(blog_data, publish_status)
+        if not post_data:
+            logger.error(f"❌ Failed to prepare WordPress post data for blog {blog_id}")
+            update_blog_status(blog_id, BlogStatus.FAILED, "Failed to prepare post data")
+            return {
+                "blog_id": blog_id,
+                "status": "failed",
+                "error": "Failed to prepare post data"
+            }
+        
+        logger.info(f"✅ WordPress post data prepared successfully for blog {blog_id}")
         
         # Publish to WordPress
+        logger.info(f"🚀 Publishing blog {blog_id} to WordPress...")
         wp_response = publish_post_to_wordpress(wp_account, post_data)
         
         if wp_response["success"]:
@@ -80,10 +105,19 @@ def publish_to_wordpress_task(self, blog_id: str, wordpress_account_id: str,
 def prepare_wordpress_post(blog_data: Dict, publish_status: str) -> Dict:
     """Prepare blog data for WordPress API"""
     try:
+        logger.info(f"🔍 Preparing WordPress post data for blog: {blog_data.get('title', 'Unknown')}")
+        
         # Extract blog content and metadata
         title = blog_data.get("title", "Untitled Blog Post")
         content = blog_data.get("content", "")
         seo_meta = blog_data.get("seo_meta", {})
+        
+        # Validate required fields
+        if not title or not content:
+            logger.error(f"❌ Missing required fields - title: {bool(title)}, content: {bool(content)}")
+            raise ValueError("Title and content are required for WordPress publishing")
+        
+        logger.info(f"✅ Content validation passed - title: {len(title)} chars, content: {len(content)} chars")
         
         # Prepare WordPress post data
         post_data = {
@@ -94,28 +128,40 @@ def prepare_wordpress_post(blog_data: Dict, publish_status: str) -> Dict:
         }
         
         # Add excerpt if available
-        if seo_meta.get("meta_description"):
+        if seo_meta and seo_meta.get("meta_description"):
             post_data["excerpt"] = seo_meta["meta_description"]
+            logger.info(f"✅ Added excerpt: {len(seo_meta['meta_description'])} chars")
         
         # Add categories and tags
-        if seo_meta.get("tags"):
+        if seo_meta and seo_meta.get("tags"):
             post_data["tags"] = seo_meta["tags"]
+            logger.info(f"✅ Added tags: {len(seo_meta['tags'])} tags")
         
         # Add featured image if available
-        if seo_meta.get("featured_image", {}).get("url"):
+        if seo_meta and seo_meta.get("featured_image", {}).get("url"):
             post_data["featured_media"] = seo_meta["featured_image"]["url"]
+            logger.info(f"✅ Added featured image: {seo_meta['featured_image']['url']}")
+        else:
+            logger.info(f"ℹ️ No featured image available - post will be published without image")
         
         # Add custom fields for SEO
-        if seo_meta.get("main_keyword"):
+        if seo_meta and seo_meta.get("main_keyword"):
             post_data["meta"] = {
                 "focus_keyword": seo_meta["main_keyword"],
                 "seo_score": seo_meta.get("seo_score", 0)
             }
+            logger.info(f"✅ Added SEO metadata: {seo_meta['main_keyword']}")
+        
+        logger.info(f"✅ WordPress post data prepared successfully")
+        logger.info(f"🔍 Final post data keys: {list(post_data.keys())}")
         
         return post_data
         
     except Exception as e:
-        logger.error(f"Error preparing WordPress post: {e}")
+        logger.error(f"❌ Error preparing WordPress post: {e}")
+        logger.error(f"❌ Error type: {type(e)}")
+        import traceback
+        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
         return {}
 
 def publish_post_to_wordpress(wp_account: Dict, post_data: Dict) -> Dict:
@@ -196,14 +242,72 @@ def publish_post_to_wordpress(wp_account: Dict, post_data: Dict) -> Dict:
         }
 
 def get_blog_data(blog_id: str) -> Dict[str, Any]:
-    """Get blog data from database"""
+    """Get blog data from database and retrieve content from storage if needed"""
     try:
+        logger.info(f"🔍 Fetching blog data for blog ID: {blog_id}")
+        
+        # Get blog record from database
         response = supabase_client.table("blogs").select("*").eq("id", blog_id).execute()
-        if response.data:
-            return response.data[0]
-        return None
+        if not response.data:
+            logger.error(f"❌ Blog {blog_id} not found in database")
+            return None
+        
+        blog_data = response.data[0]
+        logger.info(f"✅ Blog record retrieved: {blog_data.get('title', 'Unknown')}")
+        
+        # Check if content is stored in S3 and needs to be retrieved
+        storage_bucket = blog_data.get("storage_bucket")
+        storage_path = blog_data.get("storage_path")
+        
+        if storage_bucket == "s3-blog-content" and storage_path:
+            logger.info(f"🔍 Blog content stored in S3: {storage_path}")
+            
+            try:
+                # Retrieve content from S3
+                s3_content = s3_storage.retrieve_blog_content(storage_path, storage_bucket)
+                
+                if s3_content and "content" in s3_content:
+                    # Add content to blog data
+                    blog_data["content"] = s3_content["content"]
+                    logger.info(f"✅ Content retrieved from S3: {len(s3_content['content'])} characters")
+                else:
+                    logger.warning(f"⚠️ S3 content retrieval failed or content missing, using database fallback")
+                    # Fallback to database content if available
+                    if not blog_data.get("content"):
+                        logger.error(f"❌ No content available from S3 or database for blog {blog_id}")
+                        return None
+                        
+            except Exception as s3_error:
+                logger.error(f"❌ S3 content retrieval failed: {s3_error}")
+                logger.info(f"🔄 Falling back to database content")
+                
+                # Fallback to database content if available
+                if not blog_data.get("content"):
+                    logger.error(f"❌ No content available from S3 or database for blog {blog_id}")
+                    return None
+                    
+        elif storage_bucket == "database" or blog_data.get("content"):
+            logger.info(f"✅ Blog content available in database: {len(blog_data.get('content', ''))} characters")
+        else:
+            logger.error(f"❌ No content found for blog {blog_id} - storage_bucket: {storage_bucket}, storage_path: {storage_path}")
+            return None
+        
+        # Ensure we have the required fields for WordPress publishing
+        required_fields = ["title", "content"]
+        missing_fields = [field for field in required_fields if not blog_data.get(field)]
+        
+        if missing_fields:
+            logger.error(f"❌ Missing required fields for WordPress publishing: {missing_fields}")
+            return None
+        
+        logger.info(f"✅ Blog data ready for WordPress publishing: {blog_data.get('title')}")
+        return blog_data
+        
     except Exception as e:
-        logger.error(f"Error fetching blog data: {e}")
+        logger.error(f"❌ Error fetching blog data: {e}")
+        logger.error(f"❌ Error type: {type(e)}")
+        import traceback
+        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
         return None
 
 def get_wordpress_account(wordpress_account_id: str) -> Dict[str, Any]:

@@ -169,15 +169,31 @@ class SupabaseAPI {
   }
 
   async updateWordPressAccount(id: string, updates: Partial<WordPressAccount>): Promise<void> {
-    try {
-    const userId = this.getCurrentUserId()
+    // Add timeout wrapper to prevent hanging
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('WordPress account update timed out after 10 seconds')), 10000)
+    })
+
+    const updatePromise = this._updateWordPressAccount(id, updates)
     
+    return Promise.race([updatePromise, timeoutPromise])
+  }
+
+  private async _updateWordPressAccount(id: string, updates: Partial<WordPressAccount>): Promise<void> {
+    try {
+      console.log('🔄 Starting WordPress account update for ID:', id)
+      console.log('🔄 Updates to apply:', updates)
+      
+      const userId = this.getCurrentUserId()
+      console.log('🔄 Got user ID:', userId)
+      
       // Check if Supabase is configured
       if (!this.isSupabaseConfigured()) {
         console.warn('Supabase not configured, cannot update WordPress account')
         throw new Error('Supabase not configured')
       }
       
+      console.log('🔄 Getting current account details...')
       // Get current account details for logging
       const { data: currentAccount } = await supabase
         .from('wordpress_accounts')
@@ -185,6 +201,9 @@ class SupabaseAPI {
         .eq('id', id)
         .eq('user_id', userId)
         .single()
+      
+      console.log('🔄 Current account details:', currentAccount)
+      console.log('🔄 Updating WordPress account...')
 
       const { error } = await supabase
         .from('wordpress_accounts')
@@ -194,35 +213,52 @@ class SupabaseAPI {
 
       if (error) throw error
 
-      // Log successful WordPress account update (with error handling)
-      try {
-      await supabaseLogger.info("user", "WordPress account updated successfully", {
-        details: {
-          account_id: id,
-          account_name: currentAccount?.name || 'Unknown',
-          site_url: currentAccount?.site_url || 'Unknown',
-          updated_fields: Object.keys(updates),
-          updates: updates
-        }
+      console.log('✅ WordPress account updated successfully:', {
+        account_id: id,
+        account_name: currentAccount?.name || 'Unknown',
+        site_url: currentAccount?.site_url || 'Unknown',
+        updated_fields: Object.keys(updates)
       })
-      } catch (logError) {
-        console.warn('Failed to log WordPress account update:', logError)
-        // Don't throw error for logging failures
-      }
+
+      // Log the activity using the existing supabaseLogger pattern
+      this.logActivity('wordpress_account_updated', {
+        site_url: currentAccount?.site_url || '',
+        account_id: id,
+        account_name: currentAccount?.name || 'Unknown'
+      }).catch(logError => {
+        // Don't let logging errors affect the main operation
+        console.warn('Failed to log activity (non-critical):', logError)
+      })
+
     } catch (error) {
-      // Log failed WordPress account update (with error handling)
-      try {
-      await supabaseLogger.error("user", "Failed to update WordPress account", {
-        details: {
-          account_id: id,
-          error: error instanceof Error ? error.message : String(error)
-        }
+      console.error('❌ Failed to update WordPress account:', error)
+      
+      // Log the error activity (non-blocking)
+      this.logActivity('wordpress_account_update_failed', {
+        account_id: id,
+        error: error instanceof Error ? error.message : String(error)
+      }).catch(logError => {
+        console.warn('Failed to log error activity (non-critical):', logError)
       })
-      } catch (logError) {
-        console.warn('Failed to log WordPress account update error:', logError)
-        // Don't throw error for logging failures
-      }
+      
       throw error
+    }
+  }
+
+  // Simple activity logging that won't hang
+  private async logActivity(action: string, details: any): Promise<void> {
+    try {
+      // Log to console for immediate visibility
+      console.log(`📝 Activity Log [${action}]:`, details)
+      
+      // Use the existing supabaseLogger pattern (non-blocking)
+      if (this.isSupabaseConfigured()) {
+        await supabaseLogger.info("user", action, { details })
+      }
+      
+    } catch (error) {
+      // Logging failures should never break the main functionality
+      console.warn('Activity logging failed (non-critical):', error)
     }
   }
 
@@ -343,14 +379,14 @@ class SupabaseAPI {
 
       // Log successful API key addition (with error handling)
       try {
-      await supabaseLogger.success("user", "API key added successfully", {
-        details: {
-          key_name: key.name,
-          service: key.service,
-          is_default: isDefault,
-          key_id: data.id
-        }
-      })
+        await supabaseLogger.success("user", "API key added successfully", {
+          details: {
+            key_name: key.name,
+            service: key.service,
+            is_default: isDefault,
+            key_id: data.id
+          }
+        })
       } catch (logError) {
         console.warn('Failed to log API key addition:', logError)
         // Don't throw error for logging failures
@@ -401,21 +437,22 @@ class SupabaseAPI {
 
       if (error) throw error
 
-      // Log successful API key update (with error handling)
-      try {
-      await supabaseLogger.info("user", "API key updated successfully", {
-        details: {
-          key_id: id,
-          key_name: currentKey?.name || 'Unknown',
-          service: currentKey?.service || 'Unknown',
-          updated_fields: Object.keys(updates),
-          updates: updates
-        }
+      console.log('✅ API key updated successfully:', {
+        key_id: id,
+        key_name: currentKey?.name || 'Unknown',
+        service: currentKey?.service || 'Unknown',
+        updated_fields: Object.keys(updates)
       })
-      } catch (logError) {
-        console.warn('Failed to log API key update:', logError)
-        // Don't throw error for logging failures
-      }
+
+      // Log the activity using the same pattern
+      this.logActivity('api_key_updated', {
+        key_id: id,
+        key_name: currentKey?.name || 'Unknown',
+        service: currentKey?.service || 'Unknown'
+      }).catch(logError => {
+        // Don't let logging errors affect the main operation
+        console.warn('Failed to log activity (non-critical):', logError)
+      })
     } catch (error) {
       // Log failed API key update (with error handling)
       try {
@@ -852,3 +889,4 @@ class SupabaseAPI {
 }
 
 export const supabaseApi = new SupabaseAPI()
+

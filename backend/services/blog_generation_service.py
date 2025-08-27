@@ -2,6 +2,7 @@ import asyncio
 import logging
 import hashlib
 import json
+import traceback
 from typing import List, Dict, Any
 from datetime import datetime
 import openai
@@ -69,7 +70,6 @@ class BlogGenerationService:
         except Exception as e:
             logger.error(f"❌ Failed to generate blog content: {e}")
             logger.error(f"❌ Error type: {type(e)}")
-            import traceback
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             raise
     
@@ -141,7 +141,6 @@ class BlogGenerationService:
         except Exception as e:
             logger.error(f"❌ OpenAI generation failed: {e}")
             logger.error(f"❌ Error type: {type(e)}")
-            import traceback
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             raise
     
@@ -213,7 +212,6 @@ class BlogGenerationService:
         except Exception as e:
             logger.error(f"❌ Gemini generation failed: {e}")
             logger.error(f"❌ Error type: {type(e)}")
-            import traceback
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             raise
     
@@ -328,7 +326,6 @@ class BlogGenerationService:
                 except Exception as e:
                     logger.error(f"❌ Failed to generate blog {blog_number}: {e}")
                     logger.error(f"❌ Error type: {type(e)}")
-                    import traceback
                     logger.error(f"❌ Full traceback: {traceback.format_exc()}")
                     # Continue with next blog
                     continue
@@ -339,7 +336,6 @@ class BlogGenerationService:
         except Exception as e:
             logger.error(f"❌ Blog generation service failed: {e}")
             logger.error(f"❌ Error type: {type(e)}")
-            import traceback
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             raise
     
@@ -507,7 +503,6 @@ class BlogGenerationService:
         except Exception as e:
             logger.error(f"❌ Storage error: {e}")
             logger.error(f"❌ Error type: {type(e)}")
-            import traceback
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             logger.warning(f"⚠️ Storage failed, will use database fallback")
             return False
