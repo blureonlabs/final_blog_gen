@@ -82,6 +82,7 @@ class BlogGenerationRequest(BaseModel):
     ai_model_version: Optional[str] = None
     num_blogs: int = Field(ge=1, le=100, description="Number of blogs to generate")
     batch_size: int = Field(default=5, ge=1, le=20, description="Batch size for generation")
+    max_concurrent_blogs: int = Field(default=5, ge=1, le=10, description="Maximum number of blogs to generate concurrently")
 
 class BlogGenerationResponse(BaseModel):
     """Model for blog generation response"""

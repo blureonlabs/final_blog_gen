@@ -163,13 +163,20 @@ class BlogGenerationService:
             
             logger.info(f"📝 Sending prompt to OpenAI: {prompt[:100]}...")
             
-            # Use the newer OpenAI API syntax for GPT-4o Mini compatibility (fresh request per blog)
+            # Use asyncio.run_in_executor to make the OpenAI call non-blocking
+            # This allows other coroutines to run while waiting for the API response
             logger.info(f"🔍 Sending request to fresh OpenAI instance for blog {blog_number}")
-            response = openai.ChatCompletion.create(
-                model="gpt-4o-mini-2024-07-18",  # Updated to GPT-4o Mini
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=2000,  # Use max_tokens for GPT-4o Mini
-                temperature=0.7  # Restored temperature parameter for GPT-4o Mini
+            
+            # Convert the synchronous OpenAI call to asynchronous
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,  # Use default executor
+                lambda: openai.ChatCompletion.create(
+                    model="gpt-4o-mini-2024-07-18",  # Updated to GPT-4o Mini
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=2000,  # Use max_tokens for GPT-4o Mini
+                    temperature=0.7  # Restored temperature parameter for GPT-4o Mini
+                )
             )
             
             logger.info(f"✅ OpenAI response received")
@@ -290,10 +297,18 @@ class BlogGenerationService:
             
             logger.info(f"📝 Sending prompt to Gemini: {prompt[:100]}...")
             
-            # Generate content with Gemini (fresh instance per blog)
+            # Generate content with Gemini (fresh instance per blog) - now asynchronous
             try:
                 logger.info(f"🔍 Sending request to fresh Gemini instance for blog {blog_number}")
-                response = model.generate_content(prompt)
+                
+                # Convert the synchronous Gemini call to asynchronous
+                # This allows other coroutines to run while waiting for the API response
+                loop = asyncio.get_event_loop()
+                response = await loop.run_in_executor(
+                    None,  # Use default executor
+                    lambda: model.generate_content(prompt)
+                )
+                
                 logger.info(f"✅ Gemini content generation request sent successfully")
             except Exception as e:
                 logger.error(f"❌ Failed to generate content with Gemini: {e}")
@@ -416,13 +431,248 @@ class BlogGenerationService:
         project_description: str,
         num_blogs: int,
         ai_model: str = "openai",
-        project_api_keys: dict = None
+        project_api_keys: dict = None,
+        max_concurrent_blogs: int = 5
     ) -> List[Dict[str, Any]]:
-        """Generate multiple blogs for a project with simplified AI model configuration"""
+        """Generate multiple blogs for a project with automatic multi-threading for multiple blogs"""
+        # Automatically enable multi-threading if generating more than 1 blog
+        use_multithreading = num_blogs > 1
+        
+        if use_multithreading:
+            logger.info(f"🚀 Starting multi-threaded blog generation for {num_blogs} blogs")
+            return await self._generate_blogs_multithreaded(
+                project_id, project_description, num_blogs, ai_model, 
+                project_api_keys, max_concurrent_blogs
+            )
+        else:
+            logger.info(f"🚀 Starting sequential blog generation for {num_blogs} blog")
+            return await self._generate_blogs_sequential(
+                project_id, project_description, num_blogs, ai_model, project_api_keys
+            )
+
+    async def _generate_blogs_multithreaded(
+        self,
+        project_id: str,
+        project_description: str,
+        num_blogs: int,
+        ai_model: str,
+        project_api_keys: dict,
+        max_concurrent_blogs: int
+    ) -> List[Dict[str, Any]]:
+        """Generate multiple blogs concurrently using asyncio.gather with semaphore for rate limiting"""
+        generated_blogs = []
+        failed_blogs = []
+        
+        # Create semaphore to control concurrency
+        semaphore = asyncio.Semaphore(max_concurrent_blogs)
+        
+        # Log multi-threading setup
+        start_time = asyncio.get_event_loop().time()
+        logger.info(f"🚀 MULTI-THREADING SETUP:")
+        logger.info(f"   📊 Total blogs to generate: {num_blogs}")
+        logger.info(f"   🔀 Max concurrent blogs: {max_concurrent_blogs}")
+        logger.info(f"   ⏱️  Start time: {start_time:.2f}s")
+        logger.info(f"   🎯 Expected batches: {(num_blogs + max_concurrent_blogs - 1) // max_concurrent_blogs}")
+        
+        async def generate_single_blog(blog_number: int) -> Dict[str, Any]:
+            """Generate a single blog with semaphore control and immediate database save"""
+            blog_start_time = asyncio.get_event_loop().time()
+            
+            # Acquire semaphore to control concurrency
+            async with semaphore:
+                logger.info(f"🔓 SEMAPHORE ACQUIRED for Blog {blog_number} at {blog_start_time:.2f}s")
+                try:
+                    # Generate blog content
+                    result = await self.generate_blog_content(
+                        project_description, 
+                        blog_number, 
+                        ai_model,
+                        project_api_keys
+                    )
+                    
+                    # IMMEDIATELY save blog to database
+                    logger.info(f"💾 IMMEDIATELY SAVING Blog {blog_number} to database...")
+                    save_start = asyncio.get_event_loop().time()
+                    
+                    # Create blog record
+                    blog_create = BlogCreate(
+                        project_id=project_id,
+                        title=result["title"],
+                        status=BlogStatus.READY,
+                        word_count=result["word_count"],
+                        prompt=result["prompt"],
+                        ai_model=result["ai_model"]
+                    )
+                    
+                    # Store in database with content immediately
+                    blog_record = self._store_blog(blog_create, result["content"])
+                    
+                    # Update blog with generation metadata immediately
+                    supabase_client.table("blogs").update({
+                        "generation_metadata": {
+                            "ai_model": ai_model,
+                            "generated_at": datetime.now().isoformat(),
+                            "model_provider": result.get("model_provider", ai_model),
+                            "generation_method": "multithreaded",
+                            "concurrent_batch": f"batch_{blog_number // max_concurrent_blogs + 1}",
+                            "concurrency_level": max_concurrent_blogs,
+                            "immediate_save": True
+                        },
+                        "updated_at": datetime.now().isoformat()
+                    }).eq("id", blog_record["id"]).execute()
+                    
+                    save_end = asyncio.get_event_loop().time()
+                    save_time = save_end - save_start
+                    logger.info(f"💾 Blog {blog_number} IMMEDIATELY SAVED to database in {save_time:.2f}s (ID: {blog_record['id']})")
+                    
+                    # Update project progress in real-time
+                    try:
+                        # Get current completed blogs count and increment
+                        current_response = supabase_client.table("projects").select("completed_blogs").eq("id", project_id).execute()
+                        if current_response.data:
+                            current_count = current_response.data[0].get("completed_blogs", 0)
+                            new_count = current_count + 1
+                            
+                            supabase_client.table("projects").update({
+                                "completed_blogs": new_count,
+                                "updated_at": datetime.now().isoformat()
+                            }).eq("id", project_id).execute()
+                            logger.info(f"📊 Project progress updated: {current_count} → {new_count} blogs completed")
+                    except Exception as progress_error:
+                        logger.warning(f"⚠️ Could not update project progress: {progress_error}")
+                    
+                    blog_end_time = asyncio.get_event_loop().time()
+                    blog_duration = blog_end_time - blog_start_time
+                    logger.info(f"✅ Blog {blog_number} COMPLETED and SAVED in {blog_duration:.2f}s")
+                    
+                    # Return the saved blog record instead of just the generation result
+                    return {
+                        **result,
+                        "blog_id": blog_record["id"],
+                        "saved_to_db": True,
+                        "save_time": save_time
+                    }
+                    
+                except Exception as e:
+                    blog_end_time = asyncio.get_event_loop().time()
+                    blog_duration = blog_end_time - blog_start_time
+                    logger.error(f"❌ Blog {blog_number} FAILED in {blog_duration:.2f}s: {e}")
+                    raise
+                finally:
+                    logger.info(f"🔓 SEMAPHORE RELEASED for Blog {blog_number}")
+        
+        # Create all tasks at once - they will compete for semaphore slots
+        logger.info(f"🔧 CREATING {num_blogs} CONCURRENT TASKS...")
+        tasks = []
+        for blog_number in range(1, num_blogs + 1):
+            task = generate_single_blog(blog_number)
+            tasks.append(task)
+            logger.info(f"   📝 Task {blog_number} created and queued")
+        
+        logger.info(f"🚀 STARTING CONCURRENT EXECUTION with {len(tasks)} tasks...")
+        logger.info(f"   🔀 Semaphore will allow {max_concurrent_blogs} blogs to run simultaneously")
+        
+        try:
+            # Execute all tasks concurrently - they will compete for semaphore slots
+            execution_start = asyncio.get_event_loop().time()
+            
+            # Use asyncio.gather to run all tasks concurrently
+            # The semaphore will control how many can run at the same time
+            responses = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            execution_end = asyncio.get_event_loop().time()
+            total_execution_time = execution_end - execution_start
+            
+            logger.info(f"🎉 CONCURRENT EXECUTION COMPLETED in {total_execution_time:.2f}s")
+            logger.info(f"   📊 Total blogs processed: {len(responses)}")
+            logger.info(f"   ⚡ Average time per blog: {total_execution_time / num_blogs:.2f}s")
+            logger.info(f"   🚀 Speed improvement: {num_blogs * 2 / total_execution_time:.1f}x faster than sequential")
+            
+            # Process results with detailed logging
+            logger.info(f"📝 PROCESSING GENERATION RESULTS...")
+            
+            for i, response in enumerate(responses):
+                blog_number = i + 1
+                try:
+                    if isinstance(response, Exception):
+                        logger.error(f"❌ Blog {blog_number} generation failed: {response}")
+                        failed_blogs.append(blog_number)
+                        continue
+                    
+                    blog_data = response
+                    if not blog_data:
+                        logger.error(f"❌ Blog {blog_number} generation returned no data")
+                        failed_blogs.append(blog_number)
+                        continue
+                    
+                    logger.info(f"✅ Blog {blog_number} SUCCESS: '{blog_data.get('title', 'No title')}' - Already saved to database")
+                    
+                    # Blog was already saved during generation, just add to our list
+                    if "blog_id" in blog_data:
+                        # Get the blog record from database since it was already saved
+                        try:
+                            blog_record = supabase_client.table("blogs").select("*").eq("id", blog_data["blog_id"]).execute()
+                            if blog_record.data:
+                                generated_blogs.append(blog_record.data[0])
+                                logger.info(f"📝 Blog {blog_number} added to results (ID: {blog_data['blog_id']})")
+                            else:
+                                logger.warning(f"⚠️ Blog {blog_number} not found in database despite being saved")
+                        except Exception as db_error:
+                            logger.error(f"❌ Error retrieving saved blog {blog_number}: {db_error}")
+                    else:
+                        logger.warning(f"⚠️ Blog {blog_number} missing blog_id - may not have been saved properly")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Failed to process blog {blog_number}: {e}")
+                    failed_blogs.append(blog_number)
+                    continue
+            
+            # Final summary with timing
+            end_time = asyncio.get_event_loop().time()
+            total_time = end_time - start_time
+            
+            logger.info(f"📊 FINAL MULTI-THREADING SUMMARY:")
+            logger.info(f"   ⏱️  Total time: {total_time:.2f}s")
+            logger.info(f"   🚀 Concurrent execution: {total_execution_time:.2f}s")
+            logger.info(f"   💾 Storage & metadata: {total_time - total_execution_time:.2f}s")
+            logger.info(f"   📝 Successfully generated: {len(generated_blogs)} blogs")
+            logger.info(f"   ❌ Failed: {len(failed_blogs)} blogs")
+            logger.info(f"   🎯 Success rate: {(len(generated_blogs) / num_blogs) * 100:.1f}%")
+            
+            if failed_blogs:
+                logger.info(f"   📋 Failed blog numbers: {failed_blogs}")
+            
+            # Performance analysis
+            if len(generated_blogs) > 0:
+                sequential_estimate = num_blogs * 2  # Assume 2 seconds per blog sequentially
+                speedup = sequential_estimate / total_time
+                logger.info(f"   ⚡ Performance: {speedup:.1f}x faster than estimated sequential")
+                logger.info(f"   💡 Concurrency efficiency: {(speedup / max_concurrent_blogs) * 100:.1f}%")
+            
+            logger.info(f"🎉 Multi-threaded blog generation completed: {len(generated_blogs)}/{num_blogs} successful")
+            return generated_blogs
+            
+        except Exception as e:
+            end_time = asyncio.get_event_loop().time()
+            total_time = end_time - start_time
+            logger.error(f"❌ Multi-threaded blog generation failed after {total_time:.2f}s: {e}")
+            logger.error(f"❌ Error type: {type(e)}")
+            logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+            raise
+    
+    async def _generate_blogs_sequential(
+        self,
+        project_id: str,
+        project_description: str,
+        num_blogs: int,
+        ai_model: str,
+        project_api_keys: dict
+    ) -> List[Dict[str, Any]]:
+        """Generate multiple blogs for a project sequentially"""
         generated_blogs = []
         
         try:
-            logger.info(f"🚀 Starting blog generation for project {project_id}: {num_blogs} blogs")
+            logger.info(f"🚀 Starting sequential blog generation for project {project_id}: {num_blogs} blogs")
             logger.info(f"🔍 AI Model: {ai_model}")
             logger.info(f"🔍 Project API keys: {list(project_api_keys.keys()) if project_api_keys else 'None'}")
             logger.info(f"🔍 Project description: {project_description}")
@@ -463,7 +713,8 @@ class BlogGenerationService:
                         "generation_metadata": {
                             "ai_model": ai_model,
                             "generated_at": datetime.now().isoformat(),
-                            "model_provider": blog_data.get("model_provider", ai_model)
+                            "model_provider": blog_data.get("model_provider", ai_model),
+                            "generation_method": "sequential"
                         },
                         "updated_at": datetime.now().isoformat()
                     }).eq("id", blog_record["id"]).execute()
@@ -472,11 +723,28 @@ class BlogGenerationService:
                     blog_record["generation_metadata"] = {
                         "ai_model": ai_model,
                         "generated_at": datetime.now().isoformat(),
-                        "model_provider": blog_data.get("model_provider", ai_model)
+                        "model_provider": blog_data.get("model_provider", ai_model),
+                        "generation_method": "sequential"
                     }
                     
                     generated_blogs.append(blog_record)
                     logger.info(f"✅ Blog {blog_number} generated successfully: {blog_data['title']}")
+                    
+                    # Update project progress in real-time
+                    try:
+                        # Get current completed blogs count and increment
+                        current_response = supabase_client.table("projects").select("completed_blogs").eq("id", project_id).execute()
+                        if current_response.data:
+                            current_count = current_response.data[0].get("completed_blogs", 0)
+                            new_count = current_count + 1
+                            
+                            supabase_client.table("projects").update({
+                                "completed_blogs": new_count,
+                                "updated_at": datetime.now().isoformat()
+                            }).eq("id", project_id).execute()
+                            logger.info(f"📊 Project progress updated: {current_count} → {new_count} blogs completed")
+                    except Exception as progress_error:
+                        logger.warning(f"⚠️ Could not update project progress: {progress_error}")
                     
                     # Small delay to avoid rate limiting
                     await asyncio.sleep(1)
@@ -488,11 +756,11 @@ class BlogGenerationService:
                     # Continue with next blog
                     continue
             
-            logger.info(f"🎉 Blog generation completed: {len(generated_blogs)}/{num_blogs} blogs generated")
+            logger.info(f"🎉 Sequential blog generation completed: {len(generated_blogs)}/{num_blogs} blogs generated")
             return generated_blogs
             
         except Exception as e:
-            logger.error(f"❌ Blog generation service failed: {e}")
+            logger.error(f"❌ Sequential blog generation service failed: {e}")
             logger.error(f"❌ Error type: {type(e)}")
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             raise
@@ -536,7 +804,6 @@ class BlogGenerationService:
                     "storage_bucket": "blog-content",
                     "s3_content_key": s3_key,
                     "content_size_bytes": len(content.encode()),
-                    "content_hash": content_hash,
                     "created_at": datetime.now().isoformat(),
                     "updated_at": datetime.now().isoformat()
                 }

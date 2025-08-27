@@ -137,7 +137,7 @@ async def generate_blogs(
 async def get_project_blogs(
     project_id: UUID,
     page: int = Query(1, ge=1, description="Page number"),
-    per_page: int = Query(10, ge=1, le=100, description="Items per page"),
+    per_page: int = Query(20, ge=1, le=50, description="Items per page"),
     status: Optional[str] = Query(None, description="Filter by status"),
     # current_user: dict = Depends(get_current_user)  # Temporarily disabled for testing
 ):
@@ -168,7 +168,7 @@ async def get_project_blogs(
         
         # Get paginated results
         offset = (page - 1) * per_page
-        response = query.range(offset, offset + per_page - 1).order("created_at", desc=True).execute()
+        response = query.range(offset, offset + per_page).order("created_at", desc=True).execute()
         
         blogs = [BlogResponse(**blog) for blog in response.data]
         

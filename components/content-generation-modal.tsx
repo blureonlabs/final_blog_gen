@@ -392,14 +392,14 @@ export function ContentGenerationModal({
                 {Object.entries(availableModels).map(([provider, models]) => (
                   <div key={provider}>
                     <span className="font-medium capitalize">{provider}:</span>
-                    {models.length > 0 ? (
-                      <div className="flex flex-wrap gap-2 mt-1">
-                        {models.map((model) => (
-                          <Badge key={model} variant="secondary" className="text-xs">
-                            {model}
-                          </Badge>
-                        ))}
-                      </div>
+                                          {models.length > 0 ? (
+                        <div className="flex flex-wrap gap-2 mt-1">
+                          {models.map((model: string) => (
+                            <Badge key={model} variant="secondary" className="text-xs">
+                              {model}
+                            </Badge>
+                          ))}
+                        </div>
                     ) : (
                       <span className="text-gray-500 ml-2">No API key configured</span>
                     )}

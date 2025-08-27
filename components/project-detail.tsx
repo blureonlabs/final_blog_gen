@@ -6,6 +6,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Progress } from "@/components/ui/progress"
 import { BlogPreviewModal } from "@/components/blog-preview-modal"
 import { WordPressPublishModal } from "@/components/wordpress-publish-modal"
+import { 
+  Pagination, 
+  PaginationContent, 
+  PaginationItem, 
+  PaginationLink, 
+  PaginationNext, 
+  PaginationPrevious 
+} from "@/components/ui/pagination"
 import { ArrowLeft, FileText, Eye, ExternalLink, Clock, CheckCircle, XCircle, Upload, RotateCcw } from "lucide-react"
 import { storage, type Project, type Blog } from "@/lib/storage"
 import { ContentGenerationModal } from "@/components/content-generation-modal"
@@ -25,16 +33,25 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
   const [showContentGenerationModal, setShowContentGenerationModal] = useState(false)
   const [showWordPressPublishModal, setShowWordPressPublishModal] = useState(false)
   const [blogToPublish, setBlogToPublish] = useState<Blog | null>(null)
-  const [isGeneratingContent, setIsGeneratingContent] = useState(false)
+     const [isGeneratingContent, setIsGeneratingContent] = useState(false)
+   const [shouldAutoRefresh, setShouldAutoRefresh] = useState(false)
+   
+   // Pagination state
+   const [currentPage, setCurrentPage] = useState(1)
+  const [perPage, setPerPage] = useState(10)
+  const [totalBlogs, setTotalBlogs] = useState(0)
+  const [totalPages, setTotalPages] = useState(0)
 
-  useEffect(() => {
-    console.log("🔄 ProjectDetail useEffect triggered with initialProject:", initialProject)
-    console.log("🔍 initialProject num_blogs:", initialProject?.num_blogs)
-    console.log("🔍 initialProject status:", initialProject?.status)
-    if (initialProject) {
-      loadProjectData(initialProject)
-    }
-  }, [initialProject])
+     useEffect(() => {
+     console.log("🔄 ProjectDetail useEffect triggered with initialProject:", initialProject)
+     console.log("🔍 initialProject num_blogs:", initialProject?.num_blogs)
+     console.log("🔍 initialProject status:", initialProject?.status)
+     if (initialProject) {
+       loadProjectData(initialProject)
+       // Reset auto-refresh flag when project changes
+       setShouldAutoRefresh(false)
+     }
+   }, [initialProject])
 
   const loadProjectData = async (foundProject: Project) => {
     console.log("🚀 loadProjectData called with project:", foundProject)
@@ -85,13 +102,19 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
       // Try to fetch real blogs from backend API
       try {
         console.log("🔄 Fetching blogs from backend API for project:", projectId)
-        const response = await fetch(`http://localhost:8000/api/blogs/project/${projectId}`)
+        const response = await fetch(`http://localhost:8000/api/blogs/project/${projectId}?page=${currentPage}&per_page=${perPage}`)
         console.log("📡 Backend response status:", response.status)
         
         if (response.ok) {
           const apiData = await response.json()
           console.log("📊 Backend API response:", apiData)
           console.log("📝 Raw blogs from backend:", apiData.blogs)
+          console.log("📝 Total blogs from backend:", apiData.total)
+          
+          // Update pagination state
+          setTotalBlogs(apiData.total || 0)
+          const calculatedTotalPages = Math.ceil((apiData.total || 0) / perPage)
+          setTotalPages(calculatedTotalPages)
           
           if (apiData.blogs && apiData.blogs.length > 0) {
             // Map backend blog statuses to frontend statuses
@@ -443,10 +466,16 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
     
     try {
       console.log("🔄 Refreshing blog list...")
-      const response = await fetch(`http://localhost:8000/api/blogs/project/${project.id}`)
+      const response = await fetch(`http://localhost:8000/api/blogs/project/${project.id}?page=${currentPage}&per_page=${perPage}`)
       
       if (response.ok) {
         const apiData = await response.json()
+        
+        // Update pagination state
+        setTotalBlogs(apiData.total || 0)
+        const calculatedTotalPages = Math.ceil((apiData.total || 0) / perPage)
+        setTotalPages(calculatedTotalPages)
+        
         if (apiData.blogs && apiData.blogs.length > 0) {
           const mappedBlogs = apiData.blogs.map((blog: any) => {
             const mappedStatus = mapBackendStatusToFrontend(blog.status)
@@ -466,13 +495,205 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
     }
   }
 
-  const handleStartContentGeneration = async () => {
-    console.log("[v0] Starting content generation...")
-    console.log("🔍 Project object:", project)
-    console.log("🔍 Project num_blogs:", project?.num_blogs)
-    console.log("🔍 Project ID being sent:", project?.id)
-    console.log("🔍 Project ID type:", typeof project?.id)
-    console.log("🔍 Project status:", project?.status)
+  // Handle page change
+  const handlePageChange = (newPage: number) => {
+    setLoading(true)
+    setCurrentPage(newPage)
+  }
+
+     // Effect to reload blogs when page changes
+   useEffect(() => {
+     if (project) {
+       loadProjectData(project)
+     }
+   }, [currentPage, perPage])
+
+          // Auto-refresh effect when project is in progress
+   useEffect(() => {
+     let intervalId: NodeJS.Timeout | null = null;
+     
+           if (project && (project.status === "in_progress" || shouldAutoRefresh)) {
+        // Auto-refresh every 3 seconds when generating content for immediate blog updates
+        intervalId = setInterval(async () => {
+         console.log("🔄 Auto-refreshing project data every 3 seconds for real-time blog updates...")
+         
+         try {
+           // First check project status
+           const projectResponse = await fetch(`http://localhost:8000/api/projects/${project.id}`)
+           if (projectResponse.ok) {
+             const updatedProject = await projectResponse.json()
+             
+             // If project is still in progress, refresh blogs immediately
+             if (updatedProject.status === "in_progress") {
+               console.log("🔄 Project still generating, refreshing blogs immediately...")
+               
+               // IMPORTANT: Fetch ALL blogs without pagination to see new ones immediately
+               const blogsResponse = await fetch(`http://localhost:8000/api/blogs/project/${project.id}?page=1&per_page=50`)
+               if (blogsResponse.ok) {
+                 const blogsData = await blogsResponse.json()
+                 
+                 // Update total blogs count
+                 setTotalBlogs(blogsData.total || 0)
+                 const calculatedTotalPages = Math.ceil((blogsData.total || 0) / perPage)
+                 setTotalPages(calculatedTotalPages)
+                 
+                 // Update blogs list if new blogs are available
+                 if (blogsData.blogs && blogsData.blogs.length > 0) {
+                   const mappedBlogs = blogsData.blogs.map((blog: any) => {
+                     const mappedStatus = mapBackendStatusToFrontend(blog.status)
+                     return {
+                       id: blog.id,
+                       title: blog.title,
+                       status: mappedStatus,
+                       word_count: blog.word_count || 0,
+                       created_at: blog.created_at,
+                       published_at: blog.status === "ready" ? blog.created_at : undefined,
+                       content: "",
+                       prompt: blog.prompt || "",
+                       wordpress_url: blog.wordpress_url || null,
+                       storage_path: blog.storage_path || null,
+                       storage_bucket: blog.storage_bucket || null
+                     }
+                   })
+                   
+                   console.log(`✅ Real-time update: ${mappedBlogs.length} blogs now available`)
+                   setBlogs(mappedBlogs)
+                   
+                   // If we have more blogs than expected, reset to first page to show new ones
+                   if (mappedBlogs.length > perPage) {
+                     setCurrentPage(1)
+                   }
+                 }
+               }
+               
+               // Also update project data
+               loadProjectData(project)
+                            } else {
+                 console.log("✅ Project generation completed, stopping auto-refresh")
+                 // Update local project status and stop auto-refresh
+                 setProject(prev => prev ? { ...prev, status: updatedProject.status } : null)
+                 setShouldAutoRefresh(false)
+               
+               // Final refresh after 5 seconds to ensure all blogs are loaded
+               setTimeout(async () => {
+                 try {
+                   console.log("🔄 Final refresh after completion...")
+                   const finalBlogsResponse = await fetch(`http://localhost:8000/api/blogs/project/${project.id}?page=1&per_page=50`)
+                   if (finalBlogsResponse.ok) {
+                     const finalBlogsData = await finalBlogsResponse.json()
+                     
+                     // Update total blogs count
+                     setTotalBlogs(finalBlogsData.total || 0)
+                     const calculatedTotalPages = Math.ceil((finalBlogsData.total || 0) / perPage)
+                     setTotalPages(calculatedTotalPages)
+                     
+                     if (finalBlogsData.blogs && finalBlogsData.blogs.length > 0) {
+                       const mappedFinalBlogs = finalBlogsData.blogs.map((blog: any) => {
+                         const mappedStatus = mapBackendStatusToFrontend(blog.status)
+                         return {
+                           id: blog.id,
+                           title: blog.title,
+                           status: mappedStatus,
+                           word_count: blog.word_count || 0,
+                           created_at: blog.created_at,
+                           published_at: blog.status === "ready" ? blog.created_at : undefined,
+                           content: "",
+                           prompt: blog.prompt || "",
+                           wordpress_url: blog.wordpress_url || null,
+                           storage_path: blog.storage_path || null,
+                           storage_bucket: blog.storage_bucket || null
+                         }
+                       })
+                       
+                       console.log(`✅ Final refresh completed: ${mappedFinalBlogs.length} blogs loaded`)
+                       setBlogs(mappedFinalBlogs)
+                       
+                       // Reset to first page to show all blogs
+                       setCurrentPage(1)
+                     }
+                   }
+                 } catch (error) {
+                   console.log("⚠️ Error during final refresh:", error)
+                 }
+               }, 5000) // 5 second delay
+             }
+           }
+         } catch (error) {
+           console.log("⚠️ Error during auto-refresh:", error)
+           // Continue refreshing on error
+           loadProjectData(project)
+         }
+       }, 3000) // 3 seconds for immediate blog updates
+     }
+     
+     // Cleanup interval on unmount or when project status changes
+     return () => {
+       if (intervalId) {
+         clearInterval(intervalId)
+       }
+     }
+        }, [project?.status, project?.id, perPage, shouldAutoRefresh])
+
+     const handleStartContentGeneration = async () => {
+     console.log("[v0] Starting content generation...")
+     console.log("🔍 Project object:", project)
+     console.log("🔍 Project num_blogs:", project?.num_blogs)
+     console.log("🔍 Project ID being sent:", project?.id)
+     console.log("🔍 Project ID type:", typeof project?.id)
+     console.log("🔍 Project status:", project?.status)
+     
+           // Start immediate blog monitoring for real-time updates
+      if (project) {
+        // Immediately start checking for new blogs every 2 seconds
+        const immediateRefreshInterval = setInterval(async () => {
+          try {
+            // IMPORTANT: Fetch ALL blogs without pagination to see new ones immediately
+            const blogsResponse = await fetch(`http://localhost:8000/api/blogs/project/${project.id}?page=1&per_page=50`)
+            if (blogsResponse.ok) {
+              const blogsData = await blogsResponse.json()
+              
+              // Update blogs list immediately if new blogs are available
+              if (blogsData.blogs && blogsData.blogs.length > 0) {
+                const mappedBlogs = blogsData.blogs.map((blog: any) => {
+                  const mappedStatus = mapBackendStatusToFrontend(blog.status)
+                  return {
+                    id: blog.id,
+                    title: blog.title,
+                    status: mappedStatus,
+                    word_count: blog.word_count || 0,
+                    created_at: blog.created_at,
+                    published_at: blog.status === "ready" ? blog.created_at : undefined,
+                    content: "",
+                    prompt: blog.prompt || "",
+                    wordpress_url: blog.wordpress_url || null,
+                    storage_path: blog.storage_path || null,
+                    storage_bucket: blog.storage_bucket || null
+                  }
+                })
+                
+                console.log(`🚀 Immediate blog update: ${mappedBlogs.length} blogs available`)
+                setBlogs(mappedBlogs)
+                setTotalBlogs(blogsData.total || 0)
+                const calculatedTotalPages = Math.ceil((blogsData.total || 0) / perPage)
+                setTotalPages(calculatedTotalPages)
+                
+                // If we have more blogs than expected, reset to first page to show new ones
+                if (mappedBlogs.length > perPage) {
+                  setCurrentPage(1)
+                }
+              }
+            }
+          } catch (error) {
+            console.log("⚠️ Error during immediate blog refresh:", error)
+          }
+        }, 2000) // Check every 2 seconds for immediate updates
+       
+       // Stop immediate refresh after 30 seconds and let the main auto-refresh take over
+       setTimeout(() => {
+         clearInterval(immediateRefreshInterval)
+         console.log("🔄 Switching from immediate refresh to regular auto-refresh")
+       }, 30000)
+     }
     
     // Prevent multiple simultaneous requests
     if (isGeneratingContent) {
@@ -565,11 +786,15 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
       const result = await contentResponse.json()
       console.log("✅ Content generation started successfully:", result)
       
-      // Update project status to show it's in progress
-      setProject(prev => prev ? { ...prev, status: 'in_progress' } : null)
-      
-      // Show success message
-      alert("Content generation started successfully! Check the logs for progress.")
+             // Update project status to show it's in progress
+       setProject(prev => prev ? { ...prev, status: 'in_progress' } : null)
+       
+       // Start auto-refresh immediately
+       setShouldAutoRefresh(true)
+       console.log("🚀 Auto-refresh started for content generation...")
+       
+       // Show success message
+       alert("Content generation started successfully! Check the logs for progress.")
       
     } catch (error) {
       console.error("❌ Error starting content generation:", error)
@@ -647,43 +872,31 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
   const failedBlogs = blogs.filter((blog) => blog.status === "failed").length
   const postingBlogs = blogs.filter((blog) => blog.status === "publishing").length
 
-  const progressPercentage = project.num_blogs > 0 ? (blogs.length / project.num_blogs) * 100 : 0
-  const publishedPercentage = project.num_blogs > 0 ? (publishedBlogs / project.num_blogs) * 100 : 0
+     const progressPercentage = project.num_blogs > 0 ? (totalBlogs / project.num_blogs) * 100 : 0
+   const publishedPercentage = project.num_blogs > 0 ? (publishedBlogs / project.num_blogs) * 100 : 0
 
   return (
     <div>
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center space-x-4">
-          <Button
-            onClick={onBack}
-            variant="outline"
-            size="sm"
-            className="border-gray-300 text-gray-600 hover:bg-gray-50 bg-transparent"
-          >
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Dashboard
-          </Button>
-          <h2 className="text-2xl font-bold text-gray-900">{project.name}</h2>
-        </div>
+             {/* Header */}
+       <div className="flex items-center justify-between mb-6">
+         {/* Left side - Back button */}
+         <Button
+           onClick={onBack}
+           variant="outline"
+           size="sm"
+           className="border-gray-300 text-gray-600 hover:bg-gray-50 bg-transparent"
+         >
+           <ArrowLeft className="h-4 w-4 mr-2" />
+           Back to Dashboard
+         </Button>
+         
+                   {/* Center - Project title */}
+          <div className="flex-1 flex justify-center">
+            <h2 className="text-2xl font-bold text-gray-900">{project.name}</h2>
+          </div>
 
-        <div className="flex items-center space-x-3">
-          {/* Refresh Button */}
-          <Button
-            onClick={(e) => {
-              e.preventDefault()
-              loadProjectData(project)
-            }}
-            variant="outline"
-            size="sm"
-            className="border-gray-300 text-gray-600 hover:bg-gray-50"
-            title="Refresh content"
-          >
-            <Clock className="h-4 w-4 mr-2" />
-            Refresh
-          </Button>
-
-                     {/* Start Content Generation Button */}
+                 <div className="flex items-center space-x-3">
+           {/* Start Content Generation Button */}
            {(project.status === "pending" || project.status === "in_progress" || project.status === "ready") && (
              <Button
                onClick={handleStartContentGeneration}
@@ -721,67 +934,85 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
              return null
            })()}
 
-          {/* Show status when generating */}
-          {project.status === "in_progress" && (
-            <Button
-              disabled
-              className="bg-blue-600 text-white cursor-not-allowed"
-              size="sm"
-            >
-              <Clock className="h-4 w-4 mr-2 animate-spin" />
-              Generating Content...
-            </Button>
-          )}
+           {/* Show status when generating */}
+           {project.status === "in_progress" && (
+             <Button
+               disabled
+               className="bg-blue-600 text-white cursor-not-allowed"
+               size="sm"
+             >
+               <Clock className="h-4 w-4 mr-2 animate-spin" />
+               Generating Content...
+             </Button>
+           )}
 
-          {failedBlogs > 0 && (
+           {failedBlogs > 0 && (
+             <Button
+               onClick={handleRegenerateFailed}
+               variant="outline"
+               size="sm"
+               className="border-red-300 text-red-600 hover:bg-red-50 bg-transparent"
+             >
+               <XCircle className="h-4 w-4 mr-2" />
+               Republish Failed ({failedBlogs})
+             </Button>
+           )}
+
+           
+
+                       {draftBlogs > 0 && (
+              <Button onClick={handlePublishDrafts} className="bg-indigo-600 text-white hover:bg-indigo-700" size="sm">
+                <CheckCircle className="h-4 w-4 mr-2" />
+                Publish All Drafts ({draftBlogs})
+              </Button>
+            )}
+            
+            {/* Refresh Button */}
             <Button
-              onClick={handleRegenerateFailed}
+              onClick={(e) => {
+                e.preventDefault()
+                loadProjectData(project)
+              }}
               variant="outline"
               size="sm"
-              className="border-red-300 text-red-600 hover:bg-red-50 bg-transparent"
+              className="border-gray-300 text-gray-600 hover:bg-gray-50"
+              title="Refresh content"
             >
-              <XCircle className="h-4 w-4 mr-2" />
-              Republish Failed ({failedBlogs})
+              <Clock className="h-4 w-4 mr-2" />
+              Refresh
             </Button>
-          )}
-
-          <Button
-            onClick={handleReuploadFailed}
-            variant="outline"
-            size="sm"
-            className="border-orange-300 text-orange-600 hover:bg-orange-50 bg-transparent"
-          >
-            <Upload className="h-4 w-4 mr-2" />
-            Reupload Failed
-          </Button>
-
-          {draftBlogs > 0 && (
-            <Button onClick={handlePublishDrafts} className="bg-indigo-600 text-white hover:bg-indigo-700" size="sm">
-              <CheckCircle className="h-4 w-4 mr-2" />
-              Publish All Drafts ({draftBlogs})
-            </Button>
-          )}
-
-          <Button 
-            onClick={refreshBlogList} 
-            variant="outline" 
-            size="sm"
-            className="border-gray-300 text-gray-600 hover:bg-gray-50"
-          >
-            <RotateCcw className="h-4 w-4 mr-2" />
-            Refresh Blogs
-          </Button>
-        </div>
+         </div>
       </div>
 
-      {/* Project Overview */}
-      <Card className="bg-white shadow-sm mb-8">
-        <CardHeader>
-          <CardTitle className="text-xl text-gray-900">{project.description}</CardTitle>
-          <CardDescription className="text-gray-600">
-            Created on {new Date(project.created_at).toLocaleDateString()}
-          </CardDescription>
-        </CardHeader>
+             {/* Project Overview */}
+       <Card className="bg-white shadow-sm mb-8">
+         <CardHeader>
+           <div className="flex items-center justify-between">
+                           <div>
+                <CardTitle className="text-xl text-gray-900">{project.description}</CardTitle>
+                <CardDescription className="text-gray-600">
+                  Created on {new Date(project.created_at).toLocaleDateString()}
+                </CardDescription>
+              </div>
+              
+              {/* Manual Auto-Refresh Toggle */}
+              {project.status === "in_progress" && (
+                <Button
+                  onClick={() => {
+                    setShouldAutoRefresh(!shouldAutoRefresh)
+                    console.log(`🔄 Manual auto-refresh ${shouldAutoRefresh ? 'stopped' : 'started'}`)
+                  }}
+                  variant={shouldAutoRefresh ? "destructive" : "outline"}
+                  size="sm"
+                  className={shouldAutoRefresh ? "bg-red-600 text-white hover:bg-red-700" : "border-blue-300 text-blue-600 hover:bg-blue-50"}
+                  title={shouldAutoRefresh ? "Stop auto-refresh" : "Start auto-refresh"}
+                >
+                  <Clock className="h-4 w-4 mr-2" />
+                  {shouldAutoRefresh ? "Stop Auto-Refresh" : "Start Auto-Refresh"}
+                </Button>
+              )}
+           </div>
+         </CardHeader>
         <CardContent>
           <div className="space-y-6">
             {/* Project Configuration Section */}
@@ -816,12 +1047,12 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-gray-700">Blogs Generated</span>
-                  <span className="text-sm text-gray-600">
-                    {blogs.length} of {project.num_blogs} blogs
-                  </span>
-                </div>
+                                 <div className="flex items-center justify-between">
+                   <span className="text-sm font-medium text-gray-700">Blogs Generated</span>
+                   <span className="text-sm text-gray-600">
+                     {totalBlogs} of {project.num_blogs} blogs
+                   </span>
+                 </div>
                 <Progress value={progressPercentage} className="h-2" />
               </div>
 
@@ -939,13 +1170,42 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
       {/* Blogs List */}
       <Card className="bg-white shadow-sm">
         <CardHeader>
-          <CardTitle className="text-lg text-gray-900">Generated Blogs</CardTitle>
-          <CardDescription className="text-gray-600">
-            {blogs.length > 0 ? `${blogs.length} blogs generated` : "No blogs generated yet"}
-          </CardDescription>
+          <div className="flex items-center justify-between">
+                         <div>
+               <CardTitle className="text-lg text-gray-900">Generated Blogs</CardTitle>
+             </div>
+            
+                         {/* Show per page selector - Top Right */}
+             {blogs.length > 0 && (
+               <div className="flex items-center space-x-2">
+                 <label htmlFor="per-page" className="text-sm text-gray-600">Show:</label>
+                 <select
+                   id="per-page"
+                   value={perPage}
+                   onChange={(e) => {
+                     setPerPage(Number(e.target.value))
+                     setCurrentPage(1) // Reset to first page when changing per-page
+                   }}
+                   className="border border-gray-300 rounded px-2 py-1 text-sm"
+                 >
+                   <option value={5}>5</option>
+                   <option value={10}>10</option>
+                   <option value={20}>20</option>
+                   <option value={50}>50</option>
+                 </select>
+                 <span className="text-sm text-gray-600">per page</span>
+               </div>
+             )}
+          </div>
         </CardHeader>
         <CardContent>
-          {blogs.length === 0 ? (
+           
+           {loading ? (
+            <div className="text-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+              <p className="text-gray-600">Loading blogs...</p>
+            </div>
+          ) : blogs.length === 0 ? (
             <div className="text-center py-8">
               <FileText className="h-12 w-12 text-gray-400 mx-auto mb-4" />
               <p className="text-gray-600">No blogs have been generated yet.</p>
@@ -953,7 +1213,18 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
             </div>
           ) : (
             <div className="space-y-4">
-              {blogs.map((blog) => (
+              {blogs.length === 0 ? (
+                <div className="text-center py-8">
+                  <FileText className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                  <p className="text-gray-600">No blogs found on this page.</p>
+                  {totalPages > 1 && (
+                    <p className="text-sm text-gray-500 mt-2">
+                      Try navigating to a different page or adjust the items per page.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                blogs.map((blog) => (
                 <div
                   key={blog.id}
                   className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
@@ -1020,9 +1291,52 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
                     )}
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
+                             ))
+             )}
+               
+               {/* Page Numbers - Bottom */}
+               {totalPages > 1 && (
+                 <div className="mt-6 pt-6 border-t border-gray-200">
+                   <div className="flex justify-center">
+                     <Pagination>
+                       <PaginationContent>
+                         <PaginationItem>
+                           <PaginationPrevious 
+                             onClick={() => handlePageChange(currentPage - 1)}
+                             className={currentPage <= 1 ? "pointer-events-none opacity-50" : "cursor-pointer"}
+                             size="default"
+                           />
+                         </PaginationItem>
+                         
+                         {/* Page Numbers */}
+                         {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => (
+                           <PaginationItem key={pageNum}>
+                             <PaginationLink
+                               onClick={() => handlePageChange(pageNum)}
+                               isActive={pageNum === currentPage}
+                               className="cursor-pointer"
+                               size="default"
+                             >
+                               {pageNum}
+                             </PaginationLink>
+                           </PaginationItem>
+                         ))}
+                         
+                         <PaginationItem>
+                           <PaginationNext 
+                             onClick={() => handlePageChange(currentPage + 1)}
+                             className={currentPage >= totalPages ? "pointer-events-none opacity-50" : "cursor-pointer"}
+                             size="default"
+                           />
+                         </PaginationItem>
+                       </PaginationContent>
+                     </Pagination>
+                   </div>
+                 </div>
+               )}
+               
+             </div>
+           )}
         </CardContent>
       </Card>
 

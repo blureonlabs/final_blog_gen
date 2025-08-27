@@ -235,7 +235,8 @@ async def generate_blogs_direct(
             project_description=project_description,
             num_blogs=request.num_blogs,
             ai_model=ai_model,  # Use user's selected AI model
-            project_api_keys=project_api_keys
+            project_api_keys=project_api_keys,
+            max_concurrent_blogs=getattr(request, 'max_concurrent_blogs', 5)
         )
         
         logger.info(f"✅ Blog generation completed: {len(generated_blogs)} blogs generated")
@@ -248,9 +249,10 @@ async def generate_blogs_direct(
         }).eq("id", str(request.project_id)).execute()
         
         # Log the generation completion
+        generation_method = "multi-threaded" if request.num_blogs > 1 else "sequential"
         supabase.table("activity_logs").insert({
             "user_id": str(user_id),
-            "action": f"Generated {len(generated_blogs)} blogs successfully using {request.ai_model}",
+            "action": f"Generated {len(generated_blogs)} blogs successfully using {request.ai_model} ({generation_method})",
             "level": "info",
             "category": "generation",
             "timestamp": "now()",
@@ -259,7 +261,9 @@ async def generate_blogs_direct(
                     "project_id": str(request.project_id),
                     "ai_model": request.ai_model,
                     "blogs_generated": len(generated_blogs),
-                    "project_description": project_description
+                    "project_description": project_description,
+                    "generation_method": generation_method,
+                    "max_concurrent_blogs": getattr(request, 'max_concurrent_blogs', 5)
                 }
             }
         }).execute()
@@ -267,7 +271,7 @@ async def generate_blogs_direct(
         return BlogGenerationResponse(
             project_id=request.project_id,
             task_id=f"direct_gen_{request.project_id}",
-            message=f"Successfully generated {len(generated_blogs)} blogs",
+            message=f"Successfully generated {len(generated_blogs)} blogs using {generation_method} generation",
             estimated_time=0,  # Already completed
             blogs_requested=request.num_blogs,
             batch_size=request.num_blogs
@@ -305,7 +309,7 @@ async def get_project_blogs(
         offset = (page - 1) * per_page
         
         # Get blogs with pagination
-        blogs_response = supabase.table("blogs").select("*").eq("project_id", str(project_id)).range(offset, offset + per_page - 1).order("created_at", desc=True).execute()
+        blogs_response = supabase.table("blogs").select("*").eq("project_id", str(project_id)).range(offset, offset + per_page).order("created_at", desc=True).execute()
         
         # Get total count
         count_response = supabase.table("blogs").select("id", count="exact").eq("project_id", str(project_id)).execute()
@@ -545,55 +549,4 @@ async def get_available_models():
         }
     except Exception as e:
         logger.error(f"Error getting available models: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-@router.get("/generation-status/{project_id}")
-async def get_generation_status(
-    project_id: UUID,
-    current_user: dict = Depends(get_current_user),
-    supabase = Depends(lambda: supabase_client)
-):
-    """
-    Get the current status of blog generation for a project
-    """
-    try:
-        # Validate project access
-        project_response = supabase.table("projects").select("*").eq("id", str(project_id)).eq("user_id", str(current_user["id"])).execute()
-        
-        if not project_response.data:
-            raise HTTPException(status_code=404, detail="Project not found or access denied")
-        
-        project = project_response.data[0]
-        
-        # Get blog counts by status
-        blogs_response = supabase.table("blogs").select("status").eq("project_id", str(project_id)).execute()
-        
-        status_counts = {}
-        total_blogs = 0
-        
-        for blog in blogs_response.data:
-            status = blog["status"]
-            status_counts[status] = status_counts.get(status, 0) + 1
-            total_blogs += 1
-        
-        # Calculate progress percentage
-        progress = 0
-        if project["num_blogs"] > 0:
-            completed = status_counts.get("ready", 0) + status_counts.get("published", 0)
-            progress = int((completed / project["num_blogs"]) * 100)
-        
-        return {
-            "project_id": str(project_id),
-            "project_name": project["name"],
-            "num_blogs_requested": project["num_blogs"],
-            "blogs_generated": total_blogs,
-            "progress_percentage": progress,
-            "status_breakdown": status_counts,
-            "project_status": project["status"]
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting generation status: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")

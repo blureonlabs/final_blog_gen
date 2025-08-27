@@ -71,7 +71,7 @@ async def create_project(
 @router.get("/", response_model=ProjectListResponse, summary="Get user's projects")
 async def get_projects(
     page: int = Query(1, ge=1, description="Page number"),
-    per_page: int = Query(10, ge=1, le=100, description="Items per page"),
+    per_page: int = Query(10, ge=1, le=50, description="Items per page"),
     status: Optional[str] = Query(None, description="Filter by status"),
     current_user: dict = Depends(get_current_user)
 ):

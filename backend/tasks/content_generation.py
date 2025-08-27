@@ -3,6 +3,8 @@ import logging
 from typing import List, Dict, Any
 from uuid import uuid4
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 from core.ai_client import ai_client
 from core.supabase_client import supabase_client
@@ -155,6 +157,257 @@ async def generate_blogs_task(
             "error": str(e),
             "blogs_generated": 0,
             "failed_blogs": num_blogs
+        }
+
+async def generate_blogs_multithreaded_task(
+    project_id: str,
+    prompt: str,
+    num_blogs: int,
+    ai_model: str = "openai",
+    ai_model_version: str = None,
+    user_id: str = None,
+    max_concurrent_blogs: int = 5
+):
+    """
+    Multi-threaded task for generating multiple blogs concurrently
+    
+    This function:
+    1. Uses ThreadPoolExecutor to generate multiple blogs simultaneously
+    2. Processes blogs as they complete instead of waiting for each one
+    3. Provides better performance for large numbers of blogs
+    4. Maintains rate limiting and error handling
+    """
+    supabase = supabase_client
+    
+    try:
+        logger.info(f"🚀 Starting multi-threaded blog generation for project {project_id}: {num_blogs} blogs using {ai_model}")
+        logger.info(f"🔀 Max concurrent blogs: {max_concurrent_blogs}")
+        
+        # Update project status to in_progress
+        await supabase.table("projects").update({
+            "status": "in_progress",
+            "updated_at": "now()"
+        }).eq("id", project_id).execute()
+        
+        # Log start of generation
+        await supabase.table("activity_logs").insert({
+            "user_id": user_id,
+            "action": f"Started multi-threaded generation of {num_blogs} blogs using {ai_model}",
+            "level": "info",
+            "category": "generation",
+            "timestamp": "now()",
+            "metadata": {
+                "details": {
+                    "project_id": project_id,
+                    "ai_model": ai_model,
+                    "num_blogs": num_blogs,
+                    "max_concurrent": max_concurrent_blogs,
+                    "generation_method": "multithreaded"
+                }
+            }
+        }).execute()
+        
+        # Create thread pool for concurrent blog generation
+        with ThreadPoolExecutor(max_workers=max_concurrent_blogs) as executor:
+            # Submit all blog generation tasks
+            future_to_blog = {}
+            for blog_number in range(1, num_blogs + 1):
+                future = executor.submit(
+                    _generate_single_blog_sync,
+                    project_id,
+                    prompt,
+                    blog_number,
+                    ai_model,
+                    ai_model_version,
+                    user_id
+                )
+                future_to_blog[future] = blog_number
+            
+            # Process completed blogs as they finish
+            blogs_generated = 0
+            failed_blogs = 0
+            completed_blogs = []
+            
+            for future in as_completed(future_to_blog):
+                blog_number = future_to_blog[future]
+                try:
+                    result = future.result(timeout=300)  # 5 minute timeout per blog
+                    
+                    if result and result.get("success"):
+                        blogs_generated += 1
+                        completed_blogs.append(result["blog_data"])
+                        logger.info(f"✅ Blog {blog_number} generated successfully")
+                        
+                        # Update progress
+                        progress = int((blogs_generated / num_blogs) * 100)
+                        await _update_project_progress(project_id, blogs_generated, num_blogs, progress, supabase, user_id)
+                        
+                    else:
+                        failed_blogs += 1
+                        error_msg = result.get("error", "Unknown error") if result else "No result returned"
+                        await _log_error(project_id, error_msg, supabase, user_id)
+                        logger.error(f"❌ Blog {blog_number} generation failed: {error_msg}")
+                        
+                except Exception as e:
+                    failed_blogs += 1
+                    error_msg = f"Exception in blog {blog_number}: {str(e)}"
+                    await _log_error(project_id, error_msg, supabase, user_id)
+                    logger.error(f"❌ Blog {blog_number} generation exception: {e}")
+                    continue
+        
+        # Final status update
+        final_status = "completed" if failed_blogs == 0 else "completed_with_errors"
+        await supabase.table("projects").update({
+            "status": final_status,
+            "updated_at": "now()"
+        }).eq("id", project_id).execute()
+        
+        # Log completion
+        await supabase.table("activity_logs").insert({
+            "user_id": user_id,
+            "action": f"Multi-threaded blog generation completed: {blogs_generated} successful, {failed_blogs} failed",
+            "level": "info",
+            "category": "generation",
+            "timestamp": "now()",
+            "metadata": {
+                "details": {
+                    "project_id": project_id,
+                    "blogs_generated": blogs_generated,
+                    "failed_blogs": failed_blogs,
+                    "total_requested": num_blogs,
+                    "generation_method": "multithreaded",
+                    "max_concurrent": max_concurrent_blogs
+                }
+            }
+        }).execute()
+        
+        logger.info(f"🎉 Multi-threaded blog generation completed for project {project_id}: {blogs_generated}/{num_blogs} successful")
+        
+        return {
+            "success": True,
+            "blogs_generated": blogs_generated,
+            "failed_blogs": failed_blogs,
+            "total_requested": num_blogs,
+            "generation_method": "multithreaded"
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error in multi-threaded blog generation task for project {project_id}: {e}")
+        
+        # Update project status to failed
+        await supabase.table("projects").update({
+            "status": "failed",
+            "updated_at": "now()"
+        }).eq("id", project_id).execute()
+        
+        # Log error
+        await supabase.table("activity_logs").insert({
+            "user_id": user_id,
+            "action": f"Multi-threaded blog generation failed: {str(e)}",
+            "level": "error",
+            "category": "generation",
+            "timestamp": "now()",
+            "metadata": {
+                "details": {
+                    "project_id": project_id,
+                    "error": str(e),
+                    "ai_model": ai_model,
+                    "generation_method": "multithreaded"
+                }
+            }
+        }).execute()
+        
+        return {
+            "success": False,
+            "error": str(e),
+            "blogs_generated": 0,
+            "failed_blogs": num_blogs,
+            "generation_method": "multithreaded"
+        }
+
+def _generate_single_blog_sync(
+    project_id: str,
+    prompt: str,
+    blog_number: int,
+    ai_model: str,
+    ai_model_version: str = None,
+    user_id: str = None
+) -> Dict[str, Any]:
+    """
+    Synchronous version of single blog generation for thread pool executor
+    """
+    try:
+        logger.info(f"🔀 Thread {threading.current_thread().name} generating blog {blog_number}")
+        
+        # Create a new event loop for this thread if it doesn't have one
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        # Run the async generation in the thread's event loop
+        if loop.is_running():
+            # If loop is already running, we need to use asyncio.run_coroutine_threadsafe
+            future = asyncio.run_coroutine_threadsafe(
+                _generate_single_blog_async(project_id, prompt, blog_number, ai_model, ai_model_version, user_id),
+                loop
+            )
+            return future.result(timeout=300)  # 5 minute timeout
+        else:
+            # If loop is not running, we can run it directly
+            return loop.run_until_complete(
+                _generate_single_blog_async(project_id, prompt, blog_number, ai_model, ai_model_version, user_id)
+            )
+            
+    except Exception as e:
+        logger.error(f"❌ Thread {threading.current_thread().name} failed to generate blog {blog_number}: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+async def _generate_single_blog_async(
+    project_id: str,
+    prompt: str,
+    blog_number: int,
+    ai_model: str,
+    ai_model_version: str = None,
+    user_id: str = None
+) -> Dict[str, Any]:
+    """
+    Async version of single blog generation
+    """
+    try:
+        logger.info(f"📝 Generating blog {blog_number} using {ai_model}")
+        
+        # Generate single blog using the AI client
+        blog_data = await ai_client.generate_blog_draft(
+            prompt=prompt,
+            ai_model=ai_model,
+            ai_model_version=ai_model_version
+        )
+        
+        if blog_data:
+            # Store in database
+            blog_id = await _store_blog(project_id, blog_data, supabase_client)
+            
+            return {
+                "success": True,
+                "blog_id": blog_id,
+                "blog_data": blog_data
+            }
+        else:
+            return {
+                "success": False,
+                "error": "AI client returned no data"
+            }
+            
+    except Exception as e:
+        logger.error(f"❌ Error generating blog {blog_number}: {e}")
+        return {
+            "success": False,
+            "error": str(e)
         }
 
 async def _generate_batch(

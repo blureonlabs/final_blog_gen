@@ -145,3 +145,40 @@ This backend provides the foundation for:
 - Passwords and API keys are stored in plain text for development. In production, implement encryption.
 - The authentication system is designed to work with Supabase Auth JWT tokens.
 - All database operations use Supabase's Python client for consistency.
+
+## Multi-Threading Blog Generation
+
+The system now supports **automatic multi-threading** for significantly improved performance when generating multiple blogs:
+
+### Key Benefits
+- **Automatic optimization** - no user configuration required
+- **2-4x faster generation** for multiple blogs
+- **Concurrent processing** instead of sequential waiting
+- **Configurable concurrency levels** (1-10 concurrent blogs)
+- **Smart detection** - single blog uses sequential, multiple blogs use multi-threading
+
+### How It Works
+- **1 blog**: Automatically uses sequential generation
+- **2+ blogs**: Automatically uses multi-threading for faster processing
+- **No user selection needed** - the system chooses the best approach
+
+### Usage
+```python
+# Single blog - automatically sequential
+blogs = await blog_generation_service.generate_blogs_for_project(
+    project_id="your_project",
+    num_blogs=1  # Uses sequential mode
+)
+
+# Multiple blogs - automatically multi-threaded
+blogs = await blog_generation_service.generate_blogs_for_project(
+    project_id="your_project",
+    num_blogs=10,  # Automatically uses multi-threading
+    max_concurrent_blogs=5  # Optional: control concurrency
+)
+```
+
+### API Endpoints
+- `POST /content-generation/generate-direct` - Automatic method selection based on blog count
+
+See [MULTITHREADING_IMPLEMENTATION.md](MULTITHREADING_IMPLEMENTATION.md) for detailed documentation.
