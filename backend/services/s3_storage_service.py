@@ -60,6 +60,31 @@ class S3StorageService:
             logger.error(f"❌ Error storing blog content in S3: {e}")
             return {"success": False, "error": str(e)}
     
+    def upload_content(self, content: str, key: str, content_type: str = "application/json") -> Dict[str, Any]:
+        """Upload content to S3 bucket - used by blog generation service"""
+        try:
+            if not self.s3_client:
+                raise Exception("S3 client not initialized")
+            
+            # Upload content to S3
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=key,
+                Body=content.encode('utf-8'),
+                ContentType=content_type,
+                Metadata={
+                    'timestamp': datetime.now().isoformat(),
+                    'content_type': content_type
+                }
+            )
+            
+            logger.info(f"✅ Successfully uploaded content to S3: {key}")
+            return {"success": True, "storage_path": key}
+                
+        except Exception as e:
+            logger.error(f"❌ Error uploading content to S3: {e}")
+            return {"success": False, "error": str(e)}
+    
     def retrieve_blog_content(self, storage_path: str, bucket_name: str = None) -> Optional[Dict[str, Any]]:
         """Retrieve blog content from S3 bucket"""
         try:

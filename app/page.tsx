@@ -1,11 +1,13 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import { Dashboard } from "@/components/dashboard"
 import { AuthForm } from "@/components/auth-form"
 import { authManager, type User } from "@/lib/auth"
 
 export default function Home() {
+  const searchParams = useSearchParams()
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
 

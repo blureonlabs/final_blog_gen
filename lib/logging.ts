@@ -188,7 +188,7 @@ class Analytics {
     const activeProjects = userData.projects.filter((p) => p.status === "in_progress").length
     const completedProjects = userData.projects.filter((p) => p.status === "completed").length
 
-    const totalBlogs = userData.projects.reduce((sum, project) => sum + project.total_blogs, 0)
+    const totalBlogs = userData.projects.reduce((sum, project) => sum + project.num_blogs, 0)
     const publishedBlogs = userData.projects.reduce((sum, project) => sum + project.completed_blogs, 0)
 
     // Generate recent activity from logs and user data
@@ -229,7 +229,7 @@ class Analytics {
         name: project.name,
         user: "user@example.com",
         blogs: project.completed_blogs,
-        completion: project.total_blogs > 0 ? Math.round((project.completed_blogs / project.total_blogs) * 100) : 0,
+        completion: project.num_blogs > 0 ? Math.round((project.completed_blogs / project.num_blogs) * 100) : 0,
       }))
       .sort((a, b) => b.blogs - a.blogs)
       .slice(0, 5)

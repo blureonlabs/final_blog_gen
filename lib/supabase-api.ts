@@ -12,26 +12,8 @@ export interface Project {
   wordpress_account_id?: string  // Changed from wordpress_account to match database
   api_keys?: any
   settings?: any
-  // AI Model Configuration
-  draft_creation_model?: "openai" | "gemini"
-  content_vetting_model?: "openai" | "gemini"
-  model_settings?: {
-    openai: {
-      temperature: number
-      max_tokens: number
-      model_version: "gpt-4" | "gpt-3.5-turbo"
-    }
-    gemini: {
-      temperature: number
-      max_output_tokens: number
-      model_version: "gemini-pro" | "gemini-pro-vision"
-    }
-  }
-  workflow_preferences?: {
-    vetting_threshold: number
-    auto_vet_after_draft: boolean
-    require_human_review: boolean
-  }
+  // AI Model Configuration - using draft_creation_model from database
+  draft_creation_model?: "openai" | "gemini"  // Single model selection
   created_at: string
   updated_at: string
 }
@@ -575,10 +557,6 @@ class SupabaseAPI {
           api_keys: project.api_keys,
           settings: project.settings,
           draft_creation_model: project.draft_creation_model,
-          content_vetting_model: project.content_vetting_model,
-          model_settings: project.model_settings,
-          workflow_preferences: project.workflow_preferences,
-          user_id: userId,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         }
@@ -586,14 +564,16 @@ class SupabaseAPI {
 
       // Ensure project ID is a valid UUID string
       const projectData = {
-        ...project,
-        user_id: userId,
+        name: project.name,
+        description: project.description,
+        num_blogs: project.num_blogs || 0,
+        completed_blogs: project.completed_blogs || 0,
         status: project.status || 'pending',
-        // Map frontend fields to database fields
-        num_blogs: project.total_blogs || project.num_blogs || 0,
         wordpress_account_id: project.wordpress_account_id || null,
-        // Remove fields that don't exist in database
-        total_blogs: undefined
+        api_keys: project.api_keys,
+        settings: project.settings,
+        draft_creation_model: project.draft_creation_model || null,
+        user_id: userId
       }
 
       console.log('🔍 Adding project to Supabase:', projectData)
@@ -610,7 +590,8 @@ class SupabaseAPI {
         console.log('🔍 Supabase connection test result:', testResponse)
       } catch (testError) {
         console.error('❌ Supabase connection test failed:', testError)
-        throw new Error(`Supabase connection failed: ${testError.message}`)
+        const errorMessage = testError instanceof Error ? testError.message : String(testError)
+        throw new Error(`Supabase connection failed: ${errorMessage}`)
       }
       
       try {
@@ -625,7 +606,8 @@ class SupabaseAPI {
           .select()
           .single()
         
-        const { data, error } = await Promise.race([supabasePromise, timeoutPromise])
+        const result = await Promise.race([supabasePromise, timeoutPromise]) as any
+        const { data, error } = result
         
         console.log('🔍 Supabase response received:', { data, error })
         

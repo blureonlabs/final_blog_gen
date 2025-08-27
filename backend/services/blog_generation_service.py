@@ -35,32 +35,49 @@ class BlogGenerationService:
         self, 
         project_description: str, 
         blog_number: int, 
-        ai_model: str = "openai",
+        ai_model: str, 
         project_api_keys: dict = None
     ) -> Dict[str, Any]:
-        """Generate blog content using specified AI model"""
+        """Generate blog content using specified AI model with fallback to Gemini if OpenAI fails"""
         try:
             logger.info(f"🔍 Starting blog content generation for blog {blog_number}")
             logger.info(f"🔍 AI model: {ai_model}")
-            logger.info(f"🔍 Project API keys: {project_api_keys}")
+            logger.info(f"🔍 Project API keys: {list(project_api_keys.keys()) if project_api_keys else 'None'}")
             logger.info(f"🔍 Project description: {project_description}")
             
             # Use project API keys - no fallback to global settings
-            if ai_model == "openai":
+            if ai_model.lower() == "openai":
                 logger.info(f"🔍 Using OpenAI model")
                 if project_api_keys and project_api_keys.get("openai"):
                     logger.info(f"✅ Using project-specific OpenAI key")
-                    # Use project-specific OpenAI key
-                    return self._generate_with_openai(project_description, blog_number, project_api_keys["openai"])
+                    try:
+                        # Try OpenAI first
+                        return await self._generate_with_openai(project_description, blog_number, project_api_keys["openai"])
+                    except Exception as openai_error:
+                        logger.warning(f"⚠️ OpenAI generation failed: {openai_error}")
+                        logger.info(f"🔄 Attempting fallback to Gemini...")
+                        
+                        # Fallback to Gemini if available
+                        if project_api_keys and project_api_keys.get("gemini"):
+                            logger.info(f"✅ Fallback: Using Gemini for blog {blog_number}")
+                            try:
+                                return await self._generate_with_gemini(project_description, blog_number, project_api_keys["gemini"])
+                            except Exception as gemini_error:
+                                logger.error(f"❌ Gemini fallback also failed: {gemini_error}")
+                                # Re-raise the original OpenAI error since both failed
+                                raise openai_error
+                        else:
+                            logger.error(f"❌ No Gemini API key available for fallback")
+                            raise openai_error
                 else:
                     logger.error(f"❌ No OpenAI API key found in project")
                     raise ValueError("OpenAI API key not configured for this project")
-            elif ai_model == "gemini":
+            elif ai_model.lower() == "gemini":
                 logger.info(f"🔍 Using Gemini model")
                 if project_api_keys and project_api_keys.get("gemini"):
                     logger.info(f"✅ Using project-specific Gemini key")
                     # Use project-specific Gemini key
-                    return self._generate_with_gemini(project_description, blog_number, project_api_keys["gemini"])
+                    return await self._generate_with_gemini(project_description, blog_number, project_api_keys["gemini"])
                 else:
                     logger.error(f"❌ No Gemini API key found in project")
                     raise ValueError("Gemini API key not configured for this project")
@@ -73,8 +90,12 @@ class BlogGenerationService:
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             raise
     
-    def _generate_with_openai(self, project_description: str, blog_number: int, api_key: str) -> Dict[str, Any]:
-        """Generate blog content using OpenAI with project-specific API key"""
+    async def _generate_with_openai(self, project_description: str, blog_number: int, api_key: str) -> Dict[str, Any]:
+        """Generate blog content using OpenAI with project-specific API key
+        
+        NOTE: Creates a FRESH OpenAI client configuration for each blog
+        to ensure independent requests and better content variation.
+        """
         try:
             logger.info(f"🔍 Starting OpenAI generation for blog {blog_number}")
             logger.info(f"🔍 API key provided: {bool(api_key)}")
@@ -87,20 +108,53 @@ class BlogGenerationService:
             
             logger.info(f"✅ Using project-specific OpenAI API key")
             import openai
-            openai.api_key = api_key
+            openai.api_key = api_key  # Fresh API key configuration per blog
+            logger.info(f"🔍 Fresh OpenAI client configured for blog {blog_number}")
+            
+            # Generate unique writing style and content angle for each blog
+            writing_styles = [
+                "analytical and data-driven",
+                "storytelling and narrative",
+                "practical and hands-on",
+                "educational and tutorial",
+                "insightful and thought-provoking",
+                "comprehensive and detailed",
+                "focused and specialized",
+                "innovative and cutting-edge"
+            ]
+            content_angles = [
+                "focus on beginner-friendly explanations",
+                "emphasize advanced techniques and insights",
+                "highlight common mistakes and solutions",
+                "explore industry trends and innovations",
+                "provide step-by-step implementation guides",
+                "discuss real-world applications and case studies",
+                "examine the science and theory behind the topic",
+                "offer expert tips and best practices"
+            ]
+            selected_style = writing_styles[blog_number % len(writing_styles)]
+            selected_angle = content_angles[blog_number % len(content_angles)]
             
             prompt = f"""
-            Create a comprehensive blog post about: {project_description}
+            Create a comprehensive, STANDALONE blog post about: {project_description}
             
-            This is blog #{blog_number} in a series. Make it unique and engaging.
+            IMPORTANT: This is NOT part of a series. Create a completely independent blog post.
+            
+            Writing Style: Use a {selected_style} approach for this blog.
+            Content Focus: {selected_angle}
             
             Requirements:
             - Write in a professional, informative tone
-            - Include a compelling title
+            - Include a compelling, unique title that stands alone
             - Structure with clear headings and subheadings
             - Provide practical insights and actionable advice
             - Aim for 800-1200 words
             - Include relevant examples and case studies
+            - Make this blog completely self-contained and independent
+            - Use a unique writing style and perspective
+            - Avoid any references to being part of a series or collection
+            - Emphasize the {selected_style} approach throughout the content
+            - Focus on {selected_angle} as the primary content angle
             
             Format the response as:
             TITLE: [Your blog title here]
@@ -109,12 +163,13 @@ class BlogGenerationService:
             
             logger.info(f"📝 Sending prompt to OpenAI: {prompt[:100]}...")
             
-            # Use the older OpenAI API syntax for Python 3.8 compatibility
+            # Use the newer OpenAI API syntax for GPT-4o Mini compatibility (fresh request per blog)
+            logger.info(f"🔍 Sending request to fresh OpenAI instance for blog {blog_number}")
             response = openai.ChatCompletion.create(
-                model="gpt-4",
+                model="gpt-4o-mini-2024-07-18",  # Updated to GPT-4o Mini
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=2000,
-                temperature=0.7
+                max_tokens=2000,  # Use max_tokens for GPT-4o Mini
+                temperature=0.7  # Restored temperature parameter for GPT-4o Mini
             )
             
             logger.info(f"✅ OpenAI response received")
@@ -144,8 +199,12 @@ class BlogGenerationService:
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             raise
     
-    def _generate_with_gemini(self, project_description: str, blog_number: int, api_key: str) -> Dict[str, Any]:
-        """Generate blog content using Gemini with project-specific API key"""
+    async def _generate_with_gemini(self, project_description: str, blog_number: int, api_key: str) -> Dict[str, Any]:
+        """Generate blog content using Gemini with project-specific API key
+        
+        NOTE: Creates a FRESH Gemini model instance for each blog (like OpenAI)
+        to ensure independent requests and better content variation.
+        """
         try:
             logger.info(f"🔍 Starting Gemini generation for blog {blog_number}")
             logger.info(f"🔍 API key provided: {bool(api_key)}")
@@ -157,56 +216,131 @@ class BlogGenerationService:
                 raise ValueError("Gemini API key is required")
             
             logger.info(f"✅ Using project-specific Gemini API key")
+            logger.info(f"🔍 API key length: {len(api_key) if api_key else 0}")
+            
+            # Configure Gemini with the project-specific API key
+            import google.generativeai as genai
             try:
-                import google.generativeai as genai
                 genai.configure(api_key=api_key)
-                model = genai.GenerativeModel('gemini-1.5-pro')
+                logger.info(f"✅ Gemini configured with API key")
             except Exception as e:
-                logger.error(f"❌ Failed to initialize Gemini with provided key: {e}")
-                raise ValueError(f"Invalid Gemini API key: {e}")
+                logger.error(f"❌ Failed to configure Gemini: {e}")
+                raise ValueError(f"Failed to configure Gemini API: {e}")
+            
+            # Create a FRESH Gemini model instance for each blog (like OpenAI)
+            try:
+                model = genai.GenerativeModel('gemini-1.5-pro')  # Fresh instance per blog
+                logger.info(f"✅ Fresh Gemini model instance created for blog {blog_number}: gemini-1.5-pro")
+            except Exception as e:
+                logger.error(f"❌ Failed to create Gemini model: {e}")
+                raise ValueError(f"Failed to create Gemini model: {e}")
+            
+            # Generate unique writing style and content angle for each blog
+            writing_styles = [
+                "analytical and data-driven",
+                "storytelling and narrative",
+                "practical and hands-on",
+                "educational and tutorial",
+                "insightful and thought-provoking",
+                "comprehensive and detailed",
+                "focused and specialized",
+                "innovative and cutting-edge"
+            ]
+            content_angles = [
+                "focus on beginner-friendly explanations",
+                "emphasize advanced techniques and insights",
+                "highlight common mistakes and solutions",
+                "explore industry trends and innovations",
+                "provide step-by-step implementation guides",
+                "discuss real-world applications and case studies",
+                "examine the science and theory behind the topic",
+                "offer expert tips and best practices"
+            ]
+            selected_style = writing_styles[blog_number % len(writing_styles)]
+            selected_angle = content_angles[blog_number % len(content_angles)]
             
             prompt = f"""
-            Create a comprehensive blog post about: {project_description}
+            Create a comprehensive, STANDALONE blog post about: {project_description}
             
-            This is blog #{blog_number} in a series. Make it unique and engaging.
+            IMPORTANT: This is NOT part of a series. Create a completely independent blog post.
+            
+            Writing Style: Use a {selected_style} approach for this blog.
+            Content Focus: {selected_angle}
             
             Requirements:
             - Write in a professional, informative tone
-            - Include a compelling title
+            - Include a compelling, unique title that stands alone
             - Structure with clear headings and subheadings
-            - Provide practical insights and actionable advice
+            - Include introduction, main content sections, and conclusion
             - Aim for 800-1200 words
-            - Include relevant examples and case studies
+            - Use bullet points and numbered lists where appropriate
+            - Include a call-to-action at the end
+            - Make it SEO-friendly with natural keyword usage
+            - Make this blog completely self-contained and independent
+            - Use a unique writing style and perspective
+            - Avoid any references to being part of a series or collection
+            - Emphasize the {selected_style} approach throughout the content
+            - Focus on {selected_angle} as the primary content angle
             
-            Format the response as:
+            Format the response exactly as follows:
             TITLE: [Your blog title here]
-            CONTENT: [Your blog content here with proper markdown formatting]
+            
+            [Your blog content here with proper formatting]
             """
             
             logger.info(f"📝 Sending prompt to Gemini: {prompt[:100]}...")
             
-            # Use synchronous call for Python 3.8 compatibility
-            response = model.generate_content(prompt)
+            # Generate content with Gemini (fresh instance per blog)
+            try:
+                logger.info(f"🔍 Sending request to fresh Gemini instance for blog {blog_number}")
+                response = model.generate_content(prompt)
+                logger.info(f"✅ Gemini content generation request sent successfully")
+            except Exception as e:
+                logger.error(f"❌ Failed to generate content with Gemini: {e}")
+                raise ValueError(f"Failed to generate content with Gemini: {e}")
             
-            logger.info(f"✅ Gemini response received")
+            # Check if response is valid
+            if not response:
+                logger.error(f"❌ No response from Gemini")
+                raise ValueError("No response from Gemini API")
+            
+            if not hasattr(response, 'text') or not response.text:
+                logger.error(f"❌ Invalid response from Gemini: {response}")
+                logger.error(f"❌ Response type: {type(response)}")
+                logger.error(f"❌ Response attributes: {dir(response)}")
+                raise ValueError("Invalid response from Gemini API")
             
             content = response.text
-            
-            logger.info(f"📝 Raw Gemini response: {content[:200]}...")
+            logger.info(f"🔍 Raw Gemini response: {content[:200]}...")
+            logger.info(f"🔍 Response type: {type(response)}")
+            logger.info(f"🔍 Response attributes: {dir(response)}")
+            logger.info(f"🔍 Response text length: {len(content) if content else 0}")
             
             # Extract title and content
+            logger.info(f"🔍 Starting title and content extraction...")
             title = self._extract_title_from_gemini_response(content)
             blog_content = self._extract_content_from_gemini_response(content)
             
-            logger.info(f"✅ Extracted title: {title}")
-            logger.info(f"✅ Extracted content length: {len(blog_content)} characters")
+            logger.info(f"🔍 Extracted title: {title}")
+            logger.info(f"🔍 Extracted content length: {len(blog_content)} characters")
+            logger.info(f"🔍 Content preview: {blog_content[:100]}...")
+            
+            # Calculate word count
+            word_count = len(blog_content.split())
+            
+            logger.info(f"✅ Gemini generation completed successfully")
+            logger.info(f"🔍 Generated title: {title}")
+            logger.info(f"🔍 Content length: {word_count} words")
             
             return {
-                "title": title,
+                "title": title or f"Blog #{blog_number}: {project_description[:50]}...",
                 "content": blog_content,
-                "word_count": len(blog_content.split()),
+                "word_count": word_count,
                 "ai_model": "gemini",
-                "prompt": prompt
+                "model_version": "gemini-1.5-pro",  # Updated model version
+                "prompt": prompt,
+                "tokens_used": len(content.split()),  # Approximate token count
+                "model_provider": "gemini"
             }
             
         except Exception as e:
@@ -254,11 +388,27 @@ class BlogGenerationService:
     
     def _extract_title_from_gemini_response(self, response: str) -> str:
         """Extract title from Gemini response"""
-        return self._extract_title_from_openai_response(response)
+        try:
+            logger.info(f"🔍 Extracting title from Gemini response...")
+            logger.info(f"🔍 Response preview: {response[:200]}...")
+            title = self._extract_title_from_openai_response(response)
+            logger.info(f"🔍 Extracted title: {title}")
+            return title
+        except Exception as e:
+            logger.error(f"❌ Failed to extract title from Gemini response: {e}")
+            return f"Blog Post - {datetime.now().strftime('%Y-%m-%d')}"
     
     def _extract_content_from_gemini_response(self, response: str) -> str:
         """Extract content from Gemini response"""
-        return self._extract_content_from_openai_response(response)
+        try:
+            logger.info(f"🔍 Extracting content from Gemini response...")
+            logger.info(f"🔍 Response preview: {response[:200]}...")
+            content = self._extract_content_from_openai_response(response)
+            logger.info(f"🔍 Extracted content length: {len(content)}")
+            return content
+        except Exception as e:
+            logger.error(f"❌ Failed to extract content from Gemini response: {e}")
+            return response.strip()
     
     async def generate_blogs_for_project(
         self,
@@ -268,20 +418,20 @@ class BlogGenerationService:
         ai_model: str = "openai",
         project_api_keys: dict = None
     ) -> List[Dict[str, Any]]:
-        """Generate multiple blogs for a project"""
+        """Generate multiple blogs for a project with simplified AI model configuration"""
         generated_blogs = []
         
         try:
             logger.info(f"🚀 Starting blog generation for project {project_id}: {num_blogs} blogs")
-            logger.info(f"🔍 AI model: {ai_model}")
-            logger.info(f"🔍 Project API keys: {project_api_keys}")
+            logger.info(f"🔍 AI Model: {ai_model}")
+            logger.info(f"🔍 Project API keys: {list(project_api_keys.keys()) if project_api_keys else 'None'}")
             logger.info(f"🔍 Project description: {project_description}")
             
             for blog_number in range(1, num_blogs + 1):
                 try:
                     logger.info(f"📝 Generating blog {blog_number}/{num_blogs}")
                     
-                    # Generate blog content using project API keys if available
+                    # Generate blog content using project API keys
                     blog_data = await self.generate_blog_content(
                         project_description, 
                         blog_number, 
@@ -291,11 +441,11 @@ class BlogGenerationService:
                     
                     logger.info(f"✅ Blog content generated: {blog_data['title']}")
                     
-                    # Create blog record with generating status
+                    # Create blog record with ready status
                     blog_create = BlogCreate(
                         project_id=project_id,
                         title=blog_data["title"],
-                        status=BlogStatus.GENERATING,  # Start with generating status
+                        status=BlogStatus.READY,  # Always ready after generation
                         word_count=blog_data["word_count"],
                         prompt=blog_data["prompt"],
                         ai_model=blog_data["ai_model"]
@@ -308,14 +458,22 @@ class BlogGenerationService:
                     
                     logger.info(f"✅ Blog stored in database: {blog_record['id']}")
                     
-                    # Update blog status to ready after successful storage
+                    # Update blog with generation metadata
                     supabase_client.table("blogs").update({
-                        "status": "ready",
+                        "generation_metadata": {
+                            "ai_model": ai_model,
+                            "generated_at": datetime.now().isoformat(),
+                            "model_provider": blog_data.get("model_provider", ai_model)
+                        },
                         "updated_at": datetime.now().isoformat()
                     }).eq("id", blog_record["id"]).execute()
                     
-                    # Update the blog record status
-                    blog_record["status"] = "ready"
+                    # Update the blog record with metadata
+                    blog_record["generation_metadata"] = {
+                        "ai_model": ai_model,
+                        "generated_at": datetime.now().isoformat(),
+                        "model_provider": blog_data.get("model_provider", ai_model)
+                    }
                     
                     generated_blogs.append(blog_record)
                     logger.info(f"✅ Blog {blog_number} generated successfully: {blog_data['title']}")
@@ -357,108 +515,79 @@ class BlogGenerationService:
             # Try S3 storage first
             try:
                 logger.info("📦 Using S3 storage for blog content")
-                self.s3_storage.ensure_bucket_exists()
+                # Store content in S3
+                s3_key = storage_path  # Use storage_path directly, no need to prefix with bucket name
+                self.s3_storage.upload_content(
+                    content=content,
+                    key=s3_key,
+                    content_type="application/json"
+                )
+                logger.info(f"✅ Content uploaded to S3: {s3_key}")
                 
-                # Create blog content data for S3
-                blog_content_data = {
-                    "title": blog_create.title,
-                    "content": content,
+                # Store blog metadata in database
+                blog_metadata = {
                     "project_id": str(blog_create.project_id),
+                    "title": blog_create.title,
+                    "status": blog_create.status,
+                    "word_count": blog_create.word_count,
+                    "prompt": blog_create.prompt,
+                    "ai_model": blog_create.ai_model,
+                    "storage_path": storage_path,
+                    "storage_bucket": "blog-content",
+                    "s3_content_key": s3_key,
+                    "content_size_bytes": len(content.encode()),
+                    "content_hash": content_hash,
                     "created_at": datetime.now().isoformat(),
-                    "word_count": len(content.split()),
-                    "content_size_bytes": len(content.encode('utf-8')),
-                    "content_hash": content_hash
+                    "updated_at": datetime.now().isoformat()
                 }
                 
-                # Store in S3
-                s3_result = self.s3_storage.store_blog_content(storage_path, blog_content_data)
+                logger.info(f"📝 Blog metadata prepared: {blog_metadata}")
                 
-                if s3_result.get("success"):
-                    logger.info("✅ Blog content stored in S3 successfully")
-                    storage_bucket = "s3-blog-content"
+                # Insert into database
+                response = supabase_client.table("blogs").insert(blog_metadata).execute()
+                
+                if response.data:
+                    logger.info(f"✅ Blog stored in database: {response.data[0]['id']}")
+                    return response.data[0]
                 else:
-                    raise Exception(f"S3 storage failed: {s3_result.get('error')}")
+                    logger.error(f"❌ Failed to store blog in database")
+                    raise RuntimeError("Database insert failed")
                     
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to store content in S3: {str(e)}, using database fallback")
-                storage_bucket = "database"
-                storage_path = f"database_fallback_{timestamp}"
-            
-            # Prepare blog metadata for database
-            blog_metadata = {
-                "project_id": str(blog_create.project_id),  # Convert UUID to string
-                "title": blog_create.title,
-                "status": blog_create.status.value if hasattr(blog_create.status, 'value') else str(blog_create.status),
-                "word_count": len(content.split()),
-                "prompt": blog_create.prompt,
-                "ai_model": blog_create.ai_model,
-                "storage_path": storage_path,
-                "storage_bucket": storage_bucket,
-                "content_size_bytes": len(content.encode('utf-8')),
-                "content_hash": content_hash,
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat()
-            }
-            
-            # Add content field for database fallback
-            if storage_bucket == "database":
-                blog_metadata["content"] = content
+            except Exception as s3_error:
+                logger.warning(f"⚠️ S3 storage failed, using database fallback: {s3_error}")
+                
+                # Fallback: store content directly in database
                 logger.info("📝 Using database fallback for content storage")
-            
-            logger.info(f"📝 Blog metadata prepared: {blog_metadata}")
-            
-            # Insert blog metadata into database
-            try:
-                logger.info("💾 Inserting blog metadata into database...")
-                result = supabase_client.table("blogs").insert(blog_metadata).execute()
                 
-                if result.data:
-                    blog_record = result.data[0]
-                    logger.info(f"✅ Blog metadata stored in database: {blog_record.get('id')}")
-                    return blog_record
+                blog_metadata = {
+                    "project_id": str(blog_create.project_id),
+                    "title": blog_create.title,
+                    "content": content,  # Store content directly in database
+                    "status": blog_create.status,
+                    "word_count": blog_create.word_count,
+                    "prompt": blog_create.prompt,
+                    "ai_model": blog_create.ai_model,
+                    "created_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now().isoformat()
+                }
+                
+                logger.info(f"📝 Blog metadata prepared: {blog_metadata}")
+                
+                # Insert into database
+                response = supabase_client.table("blogs").insert(blog_metadata).execute()
+                
+                if response.data:
+                    logger.info(f"✅ Blog stored in database (fallback): {response.data[0]['id']}")
+                    return response.data[0]
                 else:
-                    raise Exception("No data returned from database insert")
-                    
-            except Exception as db_error:
-                logger.error(f"❌ Database insert failed: {str(db_error)}")
-                
-                # Try simplified insert with content field
-                try:
-                    logger.info("📝 Trying simplified insert with content field")
-                    simplified_metadata = {
-                        "project_id": str(blog_create.project_id),  # Convert UUID to string
-                        "title": blog_create.title,
-                        "status": "generating",
-                        "word_count": len(content.split()),
-                        "prompt": blog_create.prompt,
-                        "ai_model": blog_create.ai_model,
-                        "storage_path": storage_path,
-                        "storage_bucket": storage_bucket,
-                        "content": content,  # Always include content for fallback
-                        "created_at": datetime.now().isoformat(),
-                        "updated_at": datetime.now().isoformat()
-                    }
-                    
-                    result = supabase_client.table("blogs").insert(simplified_metadata).execute()
-                    
-                    if result.data:
-                        blog_record = result.data[0]
-                        logger.info(f"✅ Blog stored with simplified metadata: {blog_record.get('id')}")
-                        return blog_record
-                    else:
-                        raise Exception("No data returned from simplified insert")
-                        
-                except Exception as simplified_error:
-                    logger.error(f"❌ Failed to store blog: {str(simplified_error)}")
-                    logger.error(f"❌ Error type: {type(simplified_error)}")
-                    logger.error(f"❌ Full traceback: {traceback.format_exc()}")
-                    raise simplified_error
+                    logger.error(f"❌ Failed to store blog in database (fallback)")
+                    raise RuntimeError("Database insert failed (fallback)")
                     
         except Exception as e:
-            logger.error(f"❌ Failed to store blog: {str(e)}")
+            logger.error(f"❌ Blog storage failed: {e}")
             logger.error(f"❌ Error type: {type(e)}")
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
-            raise e
+            raise
     
     async def _store_content_in_storage(
         self, 

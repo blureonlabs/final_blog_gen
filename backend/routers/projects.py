@@ -45,8 +45,8 @@ async def create_project(
             "wordpress_account_id": str(project.wordpress_account_id) if project.wordpress_account_id else None,
             "api_keys": project.api_keys,
             "settings": None,  # Initialize as None
-            "draft_creation_model": project.ai_model,  # Use ai_model as draft creation model
-            "content_vetting_model": project.ai_model,  # Use ai_model as content vetting model
+            "draft_creation_model": project.draft_creation_model,  # Use draft_creation_model from request
+            "content_vetting_model": project.draft_creation_model,  # Use draft_creation_model from request
             "model_settings": None,  # Initialize as None
             "workflow_preferences": None,  # Initialize as None
             "created_at": datetime.utcnow().isoformat(),

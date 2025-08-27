@@ -16,8 +16,8 @@ interface Blog {
   word_count?: number
   prompt?: string
   ai_model?: string
-  storage_path?: string
-  storage_bucket?: string
+  storage_path?: string | null | undefined
+  storage_bucket?: string | null | undefined
 }
 
 interface BlogPreviewModalProps {
@@ -86,7 +86,7 @@ export function BlogPreviewModal({ blog, onClose }: BlogPreviewModalProps) {
             <div className="flex items-center space-x-2">
               {blog.wordpress_url && (
                 <Button
-                  onClick={() => window.open(blog.wordpress_url, "_blank")}
+                  onClick={() => window.open(blog.wordpress_url!, "_blank")}
                   variant="outline"
                   size="sm"
                   className="border-gray-300 text-gray-600 hover:bg-gray-50"

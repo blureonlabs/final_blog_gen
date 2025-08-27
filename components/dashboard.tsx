@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { ProjectList } from "@/components/project-list"
 import { NewProjectModal } from "@/components/new-project-modal"
@@ -24,7 +25,9 @@ interface DashboardProps {
 }
 
 export function Dashboard({ user }: DashboardProps) {
-  const [activeView, setActiveView] = useState<"dashboard" | "admin" | "settings">("dashboard")
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const [activeView, setActiveView] = useState<"dashboard" | "admin" | "settings" | "projects" | "project" | "logs">("dashboard")
   const [showNewProject, setShowNewProject] = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [showContentGenerationModal, setShowContentGenerationModal] = useState(false)
@@ -34,6 +37,103 @@ export function Dashboard({ user }: DashboardProps) {
   const [loading, setLoading] = useState(true)
   const permissions = usePermissions()
 
+  // Initialize view from URL on component mount and URL changes
+  useEffect(() => {
+    const viewFromUrl = searchParams.get('view') as "dashboard" | "admin" | "settings" | "projects" | "project" | "logs" | null
+    const projectIdFromUrl = searchParams.get('projectId')
+    
+    if (viewFromUrl && viewFromUrl !== activeView) {
+      setActiveView(viewFromUrl)
+    }
+    
+    if (projectIdFromUrl && projectIdFromUrl !== selectedProjectId) {
+      setSelectedProjectId(projectIdFromUrl)
+      // Find the project in userData if available
+      if (userData) {
+        const project = userData.projects.find(p => p.id === projectIdFromUrl)
+        if (project) {
+          setSelectedProject(project)
+        } else {
+          // Project not found, redirect to dashboard
+          console.warn(`Project with ID ${projectIdFromUrl} not found, redirecting to dashboard`)
+          setActiveView("dashboard")
+          setSelectedProjectId(null)
+          setSelectedProject(null)
+          updateUrl("dashboard")
+        }
+      }
+    }
+  }, [searchParams, activeView, selectedProjectId, userData])
+
+  // Set initial view from URL on first load
+  useEffect(() => {
+    const viewFromUrl = searchParams.get('view') as "dashboard" | "admin" | "settings" | "projects" | "project" | "logs" | null
+    if (viewFromUrl) {
+      setActiveView(viewFromUrl)
+    }
+  }, []) // Only run once on mount
+
+  // Handle browser back/forward navigation
+  useEffect(() => {
+    const handlePopState = () => {
+      const viewFromUrl = searchParams.get('view') as "dashboard" | "admin" | "settings" | "projects" | "project" | "logs" | null
+      const projectIdFromUrl = searchParams.get('projectId')
+      
+      if (viewFromUrl) {
+        setActiveView(viewFromUrl)
+      }
+      
+      if (projectIdFromUrl) {
+        setSelectedProjectId(projectIdFromUrl)
+        if (userData) {
+          const project = userData.projects.find(p => p.id === projectIdFromUrl)
+          if (project) {
+            setSelectedProject(project)
+          } else {
+            // Project not found, redirect to dashboard
+            console.warn(`Project with ID ${projectIdFromUrl} not found, redirecting to dashboard`)
+            setActiveView("dashboard")
+            setSelectedProjectId(null)
+            setSelectedProject(null)
+            updateUrl("dashboard")
+          }
+        }
+      } else {
+        setSelectedProjectId(null)
+        setSelectedProject(null)
+      }
+    }
+
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [searchParams, userData])
+
+  // Update URL when view changes
+  const updateUrl = (view: string, projectId?: string | null) => {
+    const params = new URLSearchParams()
+    params.set('view', view)
+    if (projectId) {
+      params.set('projectId', projectId)
+    }
+    const newUrl = `${window.location.pathname}?${params.toString()}`
+    router.replace(newUrl, { scroll: false })
+  }
+
+  // Handle direct navigation to project URLs
+  const handleDirectProjectNavigation = (projectId: string) => {
+    if (userData) {
+      const project = userData.projects.find(p => p.id === projectId)
+      if (project) {
+        setSelectedProject(project)
+        setSelectedProjectId(projectId)
+        setActiveView("project")
+        updateUrl("project", projectId)
+        return true
+      }
+    }
+    return false
+  }
+
   useEffect(() => {
     const loadData = async () => {
       try {
@@ -41,6 +141,24 @@ export function Dashboard({ user }: DashboardProps) {
         console.log("🚀 Initial user data loaded:", data)
         console.log("🔍 Initial projects num_blogs:", data.projects.map(p => ({ id: p.id, name: p.name, num_blogs: p.num_blogs })))
         setUserData(data)
+        
+        // After loading userData, check if we need to restore project view from URL
+        const projectIdFromUrl = searchParams.get('projectId')
+        if (projectIdFromUrl) {
+          const project = data.projects.find(p => p.id === projectIdFromUrl)
+          if (project) {
+            setSelectedProject(project)
+            setSelectedProjectId(projectIdFromUrl)
+            setActiveView("project")
+          } else {
+            // Project not found, redirect to dashboard
+            console.warn(`Project with ID ${projectIdFromUrl} not found, redirecting to dashboard`)
+            setActiveView("dashboard")
+            setSelectedProjectId(null)
+            setSelectedProject(null)
+            updateUrl("dashboard")
+          }
+        }
       } catch (error) {
         console.error("Error loading user data:", error)
         setUserData(null) // Fallback to default data
@@ -50,7 +168,7 @@ export function Dashboard({ user }: DashboardProps) {
     }
 
     loadData()
-  }, [])
+  }, [searchParams])
 
   const handleSignOut = async () => {
     try {
@@ -72,6 +190,7 @@ export function Dashboard({ user }: DashboardProps) {
       setSelectedProjectId(projectId)
       setSelectedProject(project)
       setActiveView("project")
+      updateUrl("project", projectId)
       console.log("🔍 Set selectedProjectId to:", projectId)
       console.log("🔍 Set selectedProject to:", project)
     }
@@ -110,6 +229,7 @@ export function Dashboard({ user }: DashboardProps) {
   // Add logging for view changes
   const handleViewChange = (view: "dashboard" | "projects" | "project" | "settings" | "logs" | "admin") => {
     setActiveView(view)
+    updateUrl(view, view === "project" ? selectedProjectId : null)
     // Only log admin access for security tracking
     if (view === "admin" && permissions.isAdmin) {
       supabaseLogger.info("user", "Admin accessed admin panel")
@@ -160,7 +280,7 @@ export function Dashboard({ user }: DashboardProps) {
                 </button>
                 {permissions.canViewAdmin && (
                   <button
-                    onClick={() => setActiveView("admin")}
+                    onClick={() => handleViewChange("admin")}
                     className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
                       activeView === "admin"
                         ? "bg-accent text-accent-foreground shadow-sm"
@@ -171,7 +291,7 @@ export function Dashboard({ user }: DashboardProps) {
                   </button>
                 )}
                 <button
-                  onClick={() => setActiveView("logs")}
+                  onClick={() => handleViewChange("logs")}
                   className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
                     activeView === "logs"
                       ? "bg-accent text-accent-foreground shadow-sm"
@@ -188,7 +308,7 @@ export function Dashboard({ user }: DashboardProps) {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setActiveView("settings")}
+                onClick={() => handleViewChange("settings")}
                 className="flex items-center gap-2 hover:bg-accent hover:text-accent-foreground"
                 title="Application Settings"
               >
@@ -304,8 +424,14 @@ export function Dashboard({ user }: DashboardProps) {
             {console.log("🔍 selectedProject:", selectedProject)}
             <ProjectDetail
               projectId={selectedProjectId}
-              project={selectedProject}
-              onBack={() => setActiveView("dashboard")}
+              project={{
+                ...selectedProject,
+                user_id: user.id // Add the missing user_id field
+              } as any}
+              onBack={() => {
+                setActiveView("dashboard")
+                updateUrl("dashboard")
+              }}
               onUpdate={handleDataUpdate}
             />
           </>
@@ -398,10 +524,10 @@ export function Dashboard({ user }: DashboardProps) {
           onSuccess={async (newProject) => {
             setShowNewProject(false)
             // Immediately add the new project to local state
-            setUserData(prev => ({
+            setUserData(prev => prev ? ({
               ...prev,
               projects: [newProject, ...prev.projects]
-            }))
+            }) : null)
             // Also refresh from database to ensure consistency
             setTimeout(async () => {
               await handleDataUpdate()
@@ -415,13 +541,10 @@ export function Dashboard({ user }: DashboardProps) {
       {/* Content Generation Modal */}
       {showContentGenerationModal && selectedProject && (
         <ContentGenerationModal
-          project={selectedProject}
+          isOpen={showContentGenerationModal}
+          projectId={selectedProject.id}
+          projectName={selectedProject.name}
           onClose={() => setShowContentGenerationModal(false)}
-          onStartGeneration={() => {
-            setShowContentGenerationModal(false)
-            // Refresh user data to show updated project status
-            handleDataUpdate()
-          }}
         />
       )}
 

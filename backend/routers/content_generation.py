@@ -121,27 +121,79 @@ async def generate_blogs_direct(
         
         project = project_response.data[0]
         
+        # Check if project is already in progress or completed to prevent duplicate requests
+        if project.get("status") == "in_progress":
+            logger.warning(f"⚠️ Project {request.project_id} is already in progress, rejecting duplicate request")
+            raise HTTPException(
+                status_code=409,
+                detail="Project is already generating content. Please wait for the current generation to complete."
+            )
+        
+        if project.get("status") == "completed":
+            logger.warning(f"⚠️ Project {request.project_id} is already completed, rejecting duplicate request")
+            raise HTTPException(
+                status_code=409,
+                detail="Project is already completed. Cannot start new generation."
+            )
+        
+        # Additional check: Look for blogs that are currently being generated
+        blogs_response = supabase.table("blogs").select("status").eq("project_id", str(request.project_id)).execute()
+        if blogs_response.data:
+            generating_blogs = [blog for blog in blogs_response.data if blog.get("status") == "generating"]
+            if generating_blogs:
+                logger.warning(f"⚠️ Project {request.project_id} has {len(generating_blogs)} blogs currently being generated")
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Project has {len(generating_blogs)} blogs currently being generated. Please wait for them to complete."
+                )
+        
         # Get project details for blog generation
         project_description = project.get("description", "Blog content generation")
         user_id = project.get("user_id")
         
-        # Fetch API keys from the api_keys table for the user
-        api_keys_response = supabase.table("api_keys").select("*").eq("user_id", str(user_id)).eq("is_active", True).execute()
+        # Use the user's selected AI model from the request
+        ai_model = request.ai_model
         
-        if not api_keys_response.data:
-            logger.error(f"❌ No active API keys found for user {user_id}")
-            raise HTTPException(
-                status_code=400, 
-                detail="No active API keys found. Please configure your API keys first."
-            )
+        logger.info(f"🔍 Using user-selected AI model:")
+        logger.info(f"  - AI Model: {ai_model}")
         
-        # Organize API keys by service
+        # Get project's configured API key IDs
+        project_api_key_ids = project.get("api_keys", {})
+        logger.info(f"🔍 Project API key IDs: {project_api_key_ids}")
+        
+        # Fetch actual API key values using the project's API key IDs
         project_api_keys = {}
-        for key_record in api_keys_response.data:
-            service = key_record.get("service")
-            api_key = key_record.get("api_key")
-            if service and api_key:
-                project_api_keys[service] = api_key
+        if project_api_key_ids:
+            for service, api_key_id in project_api_key_ids.items():
+                if service in ["openai", "gemini", "serp"]:  # Only fetch for supported services
+                    try:
+                        api_key_response = supabase.table("api_keys").select("api_key").eq("id", api_key_id).execute()
+                        if api_key_response.data:
+                            project_api_keys[service] = api_key_response.data[0]["api_key"]
+                            logger.info(f"✅ Fetched {service} API key for project")
+                        else:
+                            logger.warning(f"⚠️ No API key found for {service} with ID {api_key_id}")
+                    except Exception as e:
+                        logger.error(f"❌ Error fetching {service} API key: {e}")
+        
+        # Fallback: if no project-specific API keys, try user's global API keys
+        if not project_api_keys:
+            logger.info(f"🔄 No project-specific API keys found, trying user's global API keys...")
+            api_keys_response = supabase.table("api_keys").select("*").eq("user_id", str(user_id)).eq("is_active", True).execute()
+            
+            if api_keys_response.data:
+                for key_record in api_keys_response.data:
+                    service = key_record.get("service")
+                    api_key = key_record.get("api_key")
+                    if service and api_key:
+                        project_api_keys[service] = api_key
+                logger.info(f"✅ Using user's global API keys: {list(project_api_keys.keys())}")
+            else:
+                logger.error(f"❌ No API keys found for user {user_id}")
+                raise HTTPException(
+                    status_code=400, 
+                    detail="No API keys found. Please configure your API keys first."
+                )
         
         # Add detailed logging for debugging
         logger.info(f"🔍 Project data: {project}")
@@ -149,16 +201,17 @@ async def generate_blogs_direct(
         logger.info(f"🔍 Fetched API keys: {list(project_api_keys.keys())}")
         logger.info(f"🔍 Project description: {project_description}")
         logger.info(f"🔍 AI model requested: {request.ai_model}")
+        logger.info(f"🔍 Project AI model: {ai_model}")
         logger.info(f"🔍 Number of blogs requested: {request.num_blogs}")
         
-        # Check if user has required API keys for the requested model
-        if request.ai_model == "openai" and not project_api_keys.get("openai"):
+        # Check if user has required API keys for the project's configured model
+        if ai_model == "openai" and not project_api_keys.get("openai"):
             logger.error(f"❌ No OpenAI API key found for user {user_id}")
             raise HTTPException(
                 status_code=400, 
                 detail="OpenAI API key not configured. Please add your OpenAI API key first."
             )
-        elif request.ai_model == "gemini" and not project_api_keys.get("gemini"):
+        elif ai_model == "gemini" and not project_api_keys.get("gemini"):
             logger.error(f"❌ No Gemini API key found for user {user_id}")
             raise HTTPException(
                 status_code=400, 
@@ -176,11 +229,12 @@ async def generate_blogs_direct(
         logger.info(f"🚀 Starting blog generation with service...")
         
         # Generate blogs using the service with project details and API keys
+        # Use the user's selected AI model
         generated_blogs = await blog_generation_service.generate_blogs_for_project(
             project_id=str(request.project_id),
             project_description=project_description,
             num_blogs=request.num_blogs,
-            ai_model=request.ai_model,
+            ai_model=ai_model,  # Use user's selected AI model
             project_api_keys=project_api_keys
         )
         

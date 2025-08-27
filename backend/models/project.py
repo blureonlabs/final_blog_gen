@@ -8,7 +8,7 @@ class ProjectBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, description="Project name")
     description: Optional[str] = Field(None, description="Project description")
     num_blogs: int = Field(..., gt=0, le=1000, description="Number of blogs to generate")
-    ai_model: Optional[str] = Field(None, description="AI model to use for generation")
+    draft_creation_model: Optional[str] = Field(None, description="AI model to use for draft creation")
     wordpress_account_id: Optional[UUID] = Field(None, description="WordPress account ID")
     api_keys: Optional[Dict[str, Any]] = Field(None, description="API keys configuration")
 
@@ -21,15 +21,11 @@ class ProjectUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = None
     num_blogs: Optional[int] = Field(None, gt=0, le=1000)
-    ai_model: Optional[str] = None
+    draft_creation_model: Optional[str] = Field(None, description="AI model to use for content generation")
     wordpress_account_id: Optional[UUID] = None
     api_keys: Optional[Dict[str, Any]] = None
     status: Optional[str] = Field(None, description="Project status")
     completed_blogs: Optional[int] = Field(None, ge=0, description="Number of completed blogs")
-    draft_creation_model: Optional[str] = Field(None, description="Model for draft creation")
-    content_vetting_model: Optional[str] = Field(None, description="Model for content vetting")
-    model_settings: Optional[Dict[str, Any]] = Field(None, description="Model-specific settings")
-    workflow_preferences: Optional[Dict[str, Any]] = Field(None, description="Workflow preferences")
 
 class ProjectResponse(BaseModel):
     """Model for project response"""
@@ -44,10 +40,7 @@ class ProjectResponse(BaseModel):
     wordpress_account_id: Optional[UUID] = Field(None, description="WordPress account ID")
     api_keys: Optional[Dict[str, Any]] = Field(None, description="API keys configuration")
     settings: Optional[Dict[str, Any]] = Field(None, description="Project settings")
-    draft_creation_model: Optional[str] = Field(None, description="Model for draft creation")
-    content_vetting_model: Optional[str] = Field(None, description="Model for content vetting")
-    model_settings: Optional[Dict[str, Any]] = Field(None, description="Model-specific settings")
-    workflow_preferences: Optional[Dict[str, Any]] = Field(None, description="Workflow preferences")
+    draft_creation_model: Optional[str] = Field(None, description="AI model to use for content generation")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
     

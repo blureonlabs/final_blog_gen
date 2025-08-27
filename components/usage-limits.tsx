@@ -38,7 +38,7 @@ export function UsageLimits({ onUpgrade, currentPlan, usage, userFeatures }: Usa
 
   const imageUsage = {
     used: Math.floor(usage.blogs_generated * 1.5), // Estimate 1.5 images per blog
-    limit: limits.images_limit || 50,
+    limit: 'images_limit' in limits ? limits.images_limit : 50,
   }
 
   // Don't show usage limits for internal users with unlimited access

@@ -115,10 +115,8 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
   const [selectedGeminiKey, setSelectedGeminiKey] = useState("")
   const [selectedSerpKey, setSelectedSerpKey] = useState("")
   
-  // New AI model selection fields
-  const [draftCreationModel, setDraftCreationModel] = useState<"openai" | "gemini">("openai")
-  const [contentVettingModel, setContentVettingModel] = useState<"openai" | "gemini" | "same">("same")
-  const [useSameModel, setUseSameModel] = useState(true)
+  // Simplified AI model selection - just one model
+  const [selectedAIModel, setSelectedAIModel] = useState<"openai" | "gemini">("openai")
   
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
@@ -157,22 +155,6 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
     setSelectedGeminiKey(defaultGemini?.id || "")
     setSelectedSerpKey(defaultSerp?.id || "")
   }, [userData])
-
-  // Handle same model toggle
-  useEffect(() => {
-    if (useSameModel) {
-      setContentVettingModel("same")
-    }
-  }, [useSameModel])
-
-  // Handle content vetting model change
-  useEffect(() => {
-    if (contentVettingModel === "same") {
-      setUseSameModel(true)
-    } else {
-      setUseSameModel(false)
-    }
-  }, [contentVettingModel])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -213,11 +195,7 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
       const selectedGeminiAPI = userData.apiKeys.find((k) => k.id === selectedGeminiKey)
       const selectedSerpAPI = userData.apiKeys.find((k) => k.id === selectedSerpKey)
 
-      // Determine final vetting model
-      const finalVettingModel = contentVettingModel === "same" ? draftCreationModel : contentVettingModel
-
-      console.log("🚀 Creating project with status: ready")
-      
+      // Simplified project creation
       const newProject = await supabaseApi.addProject({
         name: name.trim(),
         description: description.trim(),
@@ -230,26 +208,8 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
           gemini: selectedGeminiAPI?.id || (isDemoMode ? "demo-gemini-key" : ""),
           serp: selectedSerpAPI?.id || (isDemoMode ? "demo-serb-key" : ""),
         },
-        // AI Model Configuration
-        draft_creation_model: draftCreationModel,
-        content_vetting_model: finalVettingModel,
-        model_settings: {
-          openai: {
-            temperature: 0.7,
-            max_tokens: 2000,
-            model_version: "gpt-4"
-          },
-          gemini: {
-            temperature: 0.3,
-            max_output_tokens: 2000,
-            model_version: "gemini-pro"
-          }
-        },
-        workflow_preferences: {
-          auto_vet_after_draft: true,
-          require_human_review: false,
-          vetting_threshold: 0.8
-        }
+        // AI Model Configuration - using draft_creation_model from database
+        draft_creation_model: selectedAIModel  // Single model selection
       })
 
       console.log("✅ Project created successfully:", newProject)
@@ -282,13 +242,14 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
           description: description.trim(),
           num_blogs: numBlogs,
           completed_blogs: 0,
-          status: "ready",
+          status: "ready" as const,
           wordpress_account_id: "demo-wp-account",
           api_keys: {
             openai: "demo-openai-key",
             gemini: "demo-gemini-key",
             serp: "demo-serb-key",
           },
+          draft_creation_model: selectedAIModel,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         }
@@ -307,16 +268,10 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
   const geminiKeys = userData.apiKeys.filter((k) => k.service === "gemini")
   const serpKeys = userData.apiKeys.filter((k) => k.service === "serp")
 
-  // Dropdown options
-  const draftModelOptions = [
-    { value: "openai", label: "OpenAI GPT-4 - Creative & Engaging" },
-    { value: "gemini", label: "Gemini Pro - Structured & Informative" }
-  ]
-
-  const vettingModelOptions = [
-    { value: "same", label: "Same as Draft Model" },
-    { value: "openai", label: "OpenAI GPT-4 - Quality & Fact-Checking" },
-    { value: "gemini", label: "Gemini Pro - Consistency & Analysis" }
+  // Simplified model options
+  const aiModelOptions = [
+    { value: "openai", label: "OpenAI GPT-5 Nano - Advanced & Fast" },
+    { value: "gemini", label: "Gemini 2.0 Flash - Fast & Efficient" }
   ]
 
   const wordpressOptions = userData.wordpressAccounts.map(account => ({
@@ -478,55 +433,21 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Draft Creation Model
+                    AI Model
                   </label>
                   <CustomDropdown
-                    value={draftCreationModel}
-                    onChange={(value) => setDraftCreationModel(value as "openai" | "gemini")}
-                    options={draftModelOptions}
-                    placeholder="Select draft creation model"
+                    value={selectedAIModel}
+                    onChange={(value) => setSelectedAIModel(value as "openai" | "gemini")}
+                    options={aiModelOptions}
+                    placeholder="Select AI Model"
                   />
                   <p className="text-xs text-gray-500 mt-1">
-                    {draftCreationModel === 'openai' 
+                    {selectedAIModel === 'openai' 
                       ? "Best for creative, engaging content with personality"
                       : "Best for structured, SEO-optimized content"
                     }
                   </p>
                 </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Content Vetting Model
-                  </label>
-                  <CustomDropdown
-                    value={contentVettingModel}
-                    onChange={(value) => setContentVettingModel(value as "openai" | "gemini" | "same")}
-                    options={vettingModelOptions}
-                    placeholder="Select vetting model"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    {contentVettingModel === 'same' 
-                      ? `Using ${draftCreationModel} for both creation and vetting`
-                      : contentVettingModel === 'openai'
-                      ? "Strong quality assurance and fact-checking"
-                      : "Excellent consistency and analytical review"
-                    }
-                  </p>
-                </div>
-              </div>
-              
-              {/* Same Model Toggle */}
-              <div className="flex items-center space-x-3">
-                <input
-                  type="checkbox"
-                  id="sameModel"
-                  checked={useSameModel}
-                  onChange={(e) => setUseSameModel(e.target.checked)}
-                  className="rounded border-gray-300"
-                />
-                <label htmlFor="sameModel" className="text-sm text-gray-700">
-                  Use same model for both draft creation and vetting
-                </label>
               </div>
             </div>
 

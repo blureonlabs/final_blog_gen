@@ -34,14 +34,19 @@ class ContentGenerationService:
             Return only the titles, one per line, without numbering or quotes.
             """
             
-            # Use the project's configured AI model
+            # Use the project's configured draft creation model
             ai_model = project.draft_creation_model or "openai"
+            logger.info(f"🔍 Using draft creation model: {ai_model} for project {project.id}")
+            
+            # Get model-specific settings
+            model_settings = project.model_settings or {}
+            ai_settings = model_settings.get(ai_model, {})
             
             response = await self.ai_client.generate_content(
                 prompt=prompt,
                 model=ai_model,
-                max_tokens=1000,
-                temperature=0.7
+                max_completion_tokens=ai_settings.get('max_tokens', 1000),  # Fixed: Use max_completion_tokens for GPT-5 Nano
+                temperature=ai_settings.get('temperature', 0.7)
             )
             
             # Parse the response to extract titles
@@ -56,8 +61,8 @@ class ContentGenerationService:
                 additional_response = await self.ai_client.generate_content(
                     prompt=additional_prompt,
                     model=ai_model,
-                    max_tokens=500,
-                    temperature=0.8
+                    max_completion_tokens=ai_settings.get('max_tokens', 500),  # Fixed: Use max_completion_tokens for GPT-5 Nano
+                    temperature=ai_settings.get('temperature', 0.8)
                 )
                 additional_titles = [title.strip() for title in additional_response.split('\n') if title.strip()]
                 titles.extend(additional_titles[:remaining])
@@ -133,14 +138,30 @@ class ContentGenerationService:
             Write the complete blog post:
             """
             
-            # Use the project's configured AI model
+            # Use the project's configured draft creation model
             ai_model = project.draft_creation_model or "openai"
+            logger.info(f"🔍 Using draft creation model: {ai_model} for blog {blog_id}")
+            
+            # Get model-specific settings
+            model_settings = project.model_settings or {}
+            ai_settings = model_settings.get(ai_model, {})
             
             content = await self.ai_client.generate_content(
                 prompt=prompt,
                 model=ai_model,
-                max_tokens=2000,
-                temperature=0.7
+                max_completion_tokens=ai_settings.get('max_tokens', 2000),  # Fixed: Use max_completion_tokens for GPT-5 Nano
+                temperature=ai_settings.get('temperature', 0.7)
+            )
+            
+            # Now vet the content using the project's vetting model
+            vetting_model = project.content_vetting_model or "openai"
+            logger.info(f"🔍 Using content vetting model: {vetting_model} for blog {blog_id}")
+            
+            vetting_result = await self.ai_client.vet_content(
+                content=content,
+                title=blog['title'],
+                project_description=project.description,
+                vetting_model=vetting_model
             )
             
             # Update blog status and metadata
@@ -148,21 +169,28 @@ class ContentGenerationService:
             seo_score = self._calculate_seo_score(content, blog['title'])
             
             update_data = {
-                "status": "completed",
+                "status": "completed" if vetting_result["passed"] else "needs_revision",
                 "word_count": word_count,
                 "seo_score": seo_score,
                 "generation_metadata": {
                     **blog.get("generation_metadata", {}),
                     "content_generated_at": datetime.utcnow().isoformat(),
-                    "content_ai_model": ai_model,
+                    "draft_creation_model": ai_model,
+                    "content_vetting_model": vetting_model,
+                    "vetting_result": vetting_result,
                     "word_count": word_count,
-                    "seo_score": seo_score
+                    "seo_score": seo_score,
+                    "vetting_passed": vetting_result["passed"]
                 },
                 "updated_at": datetime.utcnow().isoformat()
             }
             
             # Update the blog entry
             supabase_client.table("blogs").update(update_data).eq("id", str(blog_id)).execute()
+            
+            if not vetting_result["passed"]:
+                logger.warning(f"Blog {blog_id} failed vetting with score {vetting_result['parsed_results'].get('overall_score', 0)}/10")
+                logger.info(f"Vetting recommendations: {vetting_result['parsed_results'].get('recommendations', 'None')}")
             
             return content
             
@@ -226,14 +254,20 @@ class ContentGenerationService:
             
             project = ProjectResponse(**response.data[0])
             
+            # Log the AI model configuration being used
+            logger.info(f"🔍 Processing project {project_id} with AI models:")
+            logger.info(f"  - Draft Creation: {project.draft_creation_model or 'openai'}")
+            logger.info(f"  - Content Vetting: {project.content_vetting_model or 'openai'}")
+            logger.info(f"  - Model Settings: {project.model_settings}")
+            
             # Update project status to in_progress
             supabase_client.table("projects").update({
                 "status": "in_progress",
                 "updated_at": datetime.utcnow().isoformat()
             }).eq("id", str(project_id)).execute()
             
-            # Generate blog titles
-            titles = await self.generate_blog_titles(project, project.total_blogs)
+            # Generate blog titles using the project's draft creation model
+            titles = await self.generate_blog_titles(project, project.num_blogs)
             
             # Create blog entries
             blogs = await self.create_blog_entries(project, titles)
@@ -250,7 +284,11 @@ class ContentGenerationService:
                 "project_id": str(project_id),
                 "titles_generated": len(titles),
                 "blogs_created": len(blogs),
-                "status": "completed"
+                "status": "completed",
+                "ai_models_used": {
+                    "draft_creation": project.draft_creation_model or "openai",
+                    "content_vetting": project.content_vetting_model or "openai"
+                }
             }
             
         except Exception as e:

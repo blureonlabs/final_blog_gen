@@ -13,10 +13,8 @@ export interface Project {
     openai: string
   } | null
   settings: any
-  draft_creation_model: string
-  content_vetting_model: string
-  model_settings: any
-  workflow_preferences: any
+  // Simplified AI Model Configuration - just one model
+  draft_creation_model?: "openai" | "gemini"  // Single model selection
   created_at: string
   updated_at: string
 }
@@ -30,7 +28,7 @@ export interface Blog {
   published_at?: string
   content?: string
   prompt?: string
-  ai_model?: string
+  draft_creation_model?: string
   wordpress_url?: string | null
   storage_path?: string | null
   storage_bucket?: string | null

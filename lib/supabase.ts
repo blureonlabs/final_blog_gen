@@ -62,7 +62,7 @@ export interface Database {
           user_id: string
           name: string
           description: string
-          total_blogs: number
+          num_blogs: number
           completed_blogs: number
           status: 'in_progress' | 'completed' | 'failed'
           wordpress_account: string
@@ -79,7 +79,7 @@ export interface Database {
           user_id: string
           name: string
           description: string
-          total_blogs: number
+          num_blogs: number
           completed_blogs?: number
           status?: 'in_progress' | 'completed' | 'failed'
           wordpress_account: string
@@ -96,7 +96,7 @@ export interface Database {
           user_id?: string
           name?: string
           description?: string
-          total_blogs?: number
+          num_blogs?: number
           completed_blogs?: number
           status?: 'in_progress' | 'completed' | 'failed'
           wordpress_account?: string

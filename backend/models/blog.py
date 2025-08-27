@@ -12,6 +12,7 @@ class BlogStatus(str, Enum):
     FORMATTING = "formatting"
     IMAGE_GENERATING = "image_generating"
     READY = "ready"
+    NEEDS_REVISION = "needs_revision"  # New status for failed vetting
     PUBLISHING = "publishing"
     PUBLISHED = "published"
     FAILED = "failed"
@@ -27,6 +28,7 @@ class BlogCreate(BaseModel):
     seo_meta: Optional[Dict[str, Any]] = None
     status: BlogStatus = BlogStatus.DRAFT
     word_count: Optional[int] = None
+    generation_metadata: Optional[Dict[str, Any]] = None  # New field for AI generation metadata
 
 class BlogUpdate(BaseModel):
     """Model for updating a blog"""
@@ -60,6 +62,8 @@ class BlogResponse(BaseModel):
     wordpress_post_id: Optional[str] = None
     error_message: Optional[str] = None
     generation_logs: Optional[List[Dict[str, Any]]] = None
+    # AI Model Configuration and Vetting Metadata
+    generation_metadata: Optional[Dict[str, Any]] = None  # New field for AI generation metadata
     created_at: datetime
     updated_at: datetime
 

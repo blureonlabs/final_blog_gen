@@ -59,6 +59,13 @@ export function ContentGenerationModal({
     }
   }, [isOpen]);
 
+  // Update model version when AI model changes
+  useEffect(() => {
+    if (availableModels[aiModel as keyof AIModel]?.length > 0) {
+      setAiModelVersion(availableModels[aiModel as keyof AIModel][0]);
+    }
+  }, [aiModel, availableModels]);
+
   // Start status polling when generation starts
   useEffect(() => {
     if (isGenerating && generationStatus) {
@@ -81,9 +88,11 @@ export function ContentGenerationModal({
         const data = await response.json();
         setAvailableModels(data.models);
         
-        // Set default model version
+        // Set default model version based on available models
         if (data.models.openai.length > 0) {
           setAiModelVersion(data.models.openai[0]);
+        } else if (data.models.gemini.length > 0) {
+          setAiModelVersion(data.models.gemini[0]);
         }
       }
     } catch (error) {

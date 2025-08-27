@@ -22,6 +22,7 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
   const [loading, setLoading] = useState(true)
   const [selectedBlog, setSelectedBlog] = useState<Blog | null>(null)
   const [showContentGenerationModal, setShowContentGenerationModal] = useState(false)
+  const [isGeneratingContent, setIsGeneratingContent] = useState(false)
 
   useEffect(() => {
     console.log("🔄 ProjectDetail useEffect triggered with initialProject:", initialProject)
@@ -464,6 +465,12 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
     console.log("🔍 Project ID type:", typeof project?.id)
     console.log("🔍 Project status:", project?.status)
     
+    // Prevent multiple simultaneous requests
+    if (isGeneratingContent) {
+      console.log("⚠️ Content generation already in progress, ignoring duplicate request")
+      return
+    }
+    
     if (!project) {
       console.error("❌ No project object available")
       alert("No project data available. Please refresh the page and try again.")
@@ -483,6 +490,9 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
       alert("Invalid project ID format. Please refresh the page and try again.")
       return
     }
+    
+    // Set generating state to prevent duplicate requests
+    setIsGeneratingContent(true)
     
     try {
       // First, verify the project exists in the database
@@ -516,13 +526,14 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
       const requestBody = {
         project_id: project.id,  // This should now be a valid UUID string
         prompt: project.description || `Generate ${project.num_blogs} blog posts for the project: ${project.name}`,
-        ai_model: project.draft_creation_model || "openai",
-        ai_model_version: project.model_settings?.version,
+        ai_model: project.draft_creation_model || "openai",  // Use draft_creation_model from database
         num_blogs: project.num_blogs,
         batch_size: Math.min(5, project.num_blogs)  // Default to 5 or less if fewer blogs requested
       }
       
       console.log("🚀 Starting content generation with request:", requestBody)
+      console.log("🔍 AI Model Configuration:")
+      console.log("  - AI Model:", project.draft_creation_model || "openai")
       
       const contentResponse = await fetch('http://localhost:8000/api/content-generation/generate-direct', {
         method: 'POST',
@@ -534,6 +545,11 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
       
       if (!contentResponse.ok) {
         const errorData = await contentResponse.json()
+        if (contentResponse.status === 409) {
+          const errorMessage = errorData.detail || "Project is already generating content"
+          alert(`⚠️ ${errorMessage}. Please wait for the current generation to complete.`)
+          return
+        }
         throw new Error(`Blog generation failed: ${JSON.stringify(errorData)}`)
       }
       
@@ -550,6 +566,9 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
       console.error("❌ Error starting content generation:", error)
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
       alert(`Failed to start content generation: ${errorMessage}`)
+    } finally {
+      // Always reset the generating state
+      setIsGeneratingContent(false)
     }
   }
 
@@ -659,12 +678,31 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
            {(project.status === "pending" || project.status === "in_progress" || project.status === "ready") && (
              <Button
                onClick={handleStartContentGeneration}
-               className="bg-green-600 hover:bg-green-700 text-white"
+               disabled={isGeneratingContent}
+               className={`${
+                 isGeneratingContent
+                   ? "bg-gray-400 cursor-not-allowed"
+                   : "bg-green-600 hover:bg-green-700"
+               } text-white`}
                size="sm"
+               title={isGeneratingContent ? "Content generation already in progress..." : "Start generating blog content"}
              >
-               <FileText className="h-4 w-4 mr-2" />
-               {project.status === "ready" ? "Start Content Generation" : 
-                project.status === "pending" ? "Start Content Generation" : "Resume Content Generation"}
+               {isGeneratingContent ? (
+                 <>
+                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                   Starting Generation...
+                 </>
+               ) : (
+                 <>
+                   <FileText className="h-4 w-4 mr-2" />
+                   {project.status === "ready"
+                     ? "Start Content Generation"
+                     : project.status === "pending"
+                       ? "Start Content Generation"
+                       : "Resume Content Generation"
+                   }
+                 </>
+               )}
              </Button>
            )}
            
@@ -948,7 +986,7 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
 
                     {blog.wordpress_url && (
                       <Button
-                        onClick={() => window.open(blog.wordpress_url, "_blank")}
+                        onClick={() => window.open(blog.wordpress_url!, "_blank")}
                         variant="outline"
                         size="sm"
                         className={`${
@@ -975,18 +1013,10 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
       {/* Content Generation Modal */}
       {showContentGenerationModal && project && (
         <ContentGenerationModal
-          project={project}
+          isOpen={showContentGenerationModal}
+          projectId={project.id}
+          projectName={project.name}
           onClose={() => setShowContentGenerationModal(false)}
-          onStartGeneration={async () => {
-            console.log("🔄 Content generation started, will refresh data...")
-            setShowContentGenerationModal(false)
-            // Wait a bit for the backend to process
-            setTimeout(async () => {
-              console.log("🔄 Refreshing project data after content generation...")
-              await loadProjectData()
-              onUpdate()
-            }, 2000)
-          }}
         />
       )}
     </div>
