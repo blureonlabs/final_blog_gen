@@ -14,6 +14,10 @@ export interface Project {
   settings?: any
   // AI Model Configuration - using draft_creation_model from database
   draft_creation_model?: "openai" | "gemini"  // Single model selection
+  // SerpAPI Research Configuration
+  serp_api_on?: boolean
+  serp_api_contents?: string | null
+  enhanced_research?: boolean  // Enable enhanced research features
   created_at: string
   updated_at: string
 }
@@ -557,6 +561,8 @@ class SupabaseAPI {
           api_keys: project.api_keys,
           settings: project.settings,
           draft_creation_model: project.draft_creation_model,
+          serp_api_on: project.serp_api_on,
+          serp_api_contents: project.serp_api_contents,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         }
@@ -573,6 +579,9 @@ class SupabaseAPI {
         api_keys: project.api_keys,
         settings: project.settings,
         draft_creation_model: project.draft_creation_model || null,
+        serp_api_on: project.serp_api_on || false,
+        enhanced_research: project.enhanced_research || false,  // Add enhanced research field
+        serp_api_contents: project.serp_api_contents || null,
         user_id: userId
       }
 

@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Progress } from "@/components/ui/progress"
 import { BlogPreviewModal } from "@/components/blog-preview-modal"
 import { WordPressPublishModal } from "@/components/wordpress-publish-modal"
-import { ArrowLeft, FileText, Eye, ExternalLink, Clock, CheckCircle, XCircle, Upload, RotateCcw } from "lucide-react"
+import { ArrowLeft, FileText, Eye, ExternalLink, Clock, CheckCircle, XCircle, Upload, RotateCcw, Search } from "lucide-react"
 import { storage, type Project, type Blog } from "@/lib/storage"
 import { ContentGenerationModal } from "@/components/content-generation-modal"
 
@@ -41,6 +41,8 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
     console.log("🔍 Initial project num_blogs:", foundProject?.num_blogs)
     console.log("🔍 Initial project ID:", foundProject?.id)
     console.log("🔍 Initial project status:", foundProject?.status)
+    console.log("🔍 Initial project serp_api_on:", foundProject?.serp_api_on)
+    console.log("🔍 Initial project serp_api_contents:", foundProject?.serp_api_contents)
 
     if (foundProject) {
       // First, try to get updated project status from backend
@@ -51,9 +53,13 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
         
         if (projectResponse.ok) {
           const backendProject = await projectResponse.json()
-          console.log("📊 Backend project data:", backendProject)
-          console.log("🔍 Backend num_blogs:", backendProject.num_blogs)
-          console.log("🔍 Backend project ID:", backendProject.id)
+              console.log("📊 Backend project data:", backendProject)
+    console.log("🔍 Backend num_blogs:", backendProject.num_blogs)
+    console.log("🔍 Backend project ID:", backendProject.id)
+    console.log("🔍 Backend serp_api_on:", backendProject.serp_api_on)
+              console.log("🔍 Backend serp_api_contents:", backendProject.serp_api_contents)
+          console.log("🔍 Backend serp_api_contents type:", typeof backendProject.serp_api_contents)
+          console.log("🔍 Backend serp_api_contents keys:", backendProject.serp_api_contents ? Object.keys(backendProject.serp_api_contents) : "null")
           console.log("🔍 Frontend num_blogs:", foundProject.num_blogs)
           console.log("🔍 Frontend project ID:", foundProject.id)
           
@@ -466,6 +472,49 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
     }
   }
 
+  const handleRefreshResearch = async () => {
+    if (!project?.id) {
+      alert("No project ID available. Please refresh the page and try again.")
+      return
+    }
+    
+    try {
+      console.log("🔄 Refreshing research for project:", project.id)
+      
+      const response = await fetch(`http://localhost:8000/api/content-generation/refresh-research`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          project_id: project.id,
+          force_refresh: true
+        }),
+      })
+      
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.detail || `HTTP ${response.status}`)
+      }
+      
+      const result = await response.json()
+      
+      if (result.refreshed) {
+        console.log("✅ Research refreshed successfully")
+        alert("Research refreshed successfully! The project now has updated research data.")
+        // Refresh the project data to show updated research
+        loadProjectData(project)
+      } else {
+        console.log("ℹ️ Research is still fresh, no refresh needed")
+        alert("Research is still fresh and up-to-date. No refresh needed.")
+      }
+      
+    } catch (error: any) {
+      console.error("❌ Error refreshing research:", error)
+      alert(`Failed to refresh research: ${error.message}`)
+    }
+  }
+
   const handleStartContentGeneration = async () => {
     console.log("[v0] Starting content generation...")
     console.log("🔍 Project object:", project)
@@ -664,7 +713,41 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back to Dashboard
           </Button>
-          <h2 className="text-2xl font-bold text-gray-900">{project.name}</h2>
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">{project.name}</h2>
+            
+            {/* SerpAPI Status Indicator */}
+            <div className="flex items-center gap-2 mt-2">
+              <div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                project.serp_api_on 
+                  ? 'bg-blue-100 text-blue-800' 
+                  : 'bg-gray-100 text-gray-600'
+              }`}>
+                <div className={`w-2 h-2 rounded-full mr-2 ${
+                  project.serp_api_on ? 'bg-blue-500' : 'bg-gray-400'
+                }`}></div>
+                {project.serp_api_on ? 'SerpAPI Research Enabled' : 'SerpAPI Research Disabled'}
+              </div>
+              
+              {/* Enhanced Research Badge */}
+              {project.serp_api_on && project.enhanced_research && (
+                <div className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700 ml-2">
+                  <span className="text-xs mr-1">🚀</span>
+                  Enhanced Research
+                </div>
+              )}
+              
+              {/* Show research summary if available */}
+              {project.serp_api_on && project.serp_api_contents && (
+                <div className="text-xs text-gray-600">
+                  • {project.serp_api_contents.total_results || 0} sources researched
+                  {project.enhanced_research && project.serp_api_contents.enhanced_research && (
+                    <span className="ml-2 text-green-600">• Enhanced features active</span>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         <div className="flex items-center space-x-3">
@@ -683,43 +766,43 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
             Refresh
           </Button>
 
-                     {/* Start Content Generation Button */}
-           {(project.status === "pending" || project.status === "in_progress" || project.status === "ready") && (
-             <Button
-               onClick={handleStartContentGeneration}
-               disabled={isGeneratingContent}
-               className={`${
-                 isGeneratingContent
-                   ? "bg-gray-400 cursor-not-allowed"
-                   : "bg-green-600 hover:bg-green-700"
-               } text-white`}
-               size="sm"
-               title={isGeneratingContent ? "Content generation already in progress..." : "Start generating blog content"}
-             >
-               {isGeneratingContent ? (
-                 <>
-                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                   Starting Generation...
-                 </>
-               ) : (
-                 <>
-                   <FileText className="h-4 w-4 mr-2" />
-                   {project.status === "ready"
-                     ? "Start Content Generation"
-                     : project.status === "pending"
-                       ? "Start Content Generation"
-                       : "Resume Content Generation"
-                   }
-                 </>
-               )}
-             </Button>
-           )}
-           
-           {/* Debug info for button visibility */}
-           {(() => {
-             console.log("🔍 Button visibility check - project status:", project.status, "should show:", (project.status === "pending" || project.status === "in_progress" || project.status === "ready"))
-             return null
-           })()}
+          {/* Start Content Generation Button */}
+          {(project.status === "pending" || project.status === "in_progress" || project.status === "ready") && (
+            <Button
+              onClick={handleStartContentGeneration}
+              disabled={isGeneratingContent}
+              className={`${
+                isGeneratingContent
+                  ? "bg-gray-400 cursor-not-allowed"
+                  : "bg-green-600 hover:bg-green-700"
+              } text-white`}
+              size="sm"
+              title={isGeneratingContent ? "Content generation already in progress..." : "Start generating blog content"}
+            >
+              {isGeneratingContent ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                  Starting Generation...
+                </>
+              ) : (
+                <>
+                  <FileText className="h-4 w-4 mr-2" />
+                  {project.status === "ready"
+                    ? "Start Content Generation"
+                    : project.status === "pending"
+                      ? "Start Content Generation"
+                      : "Resume Content Generation"
+                  }
+                </>
+              )}
+            </Button>
+          )}
+          
+          {/* Debug info for button visibility */}
+          {(() => {
+            console.log("🔍 Button visibility check - project status:", project.status, "should show:", (project.status === "pending" || project.status === "in_progress" || project.status === "ready"))
+            return null
+          })()}
 
           {/* Show status when generating */}
           {project.status === "in_progress" && (
@@ -773,6 +856,185 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
           </Button>
         </div>
       </div>
+
+      {/* SerpAPI Research Results Display */}
+      {project && project.serp_api_on && (
+        <div className="mb-6">
+          {(() => {
+            console.log("🔍 SerpAPI Research Display - project.serp_api_on:", project.serp_api_on);
+            console.log("🔍 SerpAPI Research Display - project.serp_api_contents:", project.serp_api_contents);
+            return null;
+          })()}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <Search className="h-5 w-5 text-blue-600" />
+                    SerpAPI Research Results
+                  </CardTitle>
+                  <CardDescription>
+                    {project.serp_api_contents && project.serp_api_contents.total_results
+                      ? `${project.serp_api_contents.total_results} sources researched with SEO keywords extracted`
+                      : "Research will be performed when you start content generation"
+                    }
+                  </CardDescription>
+                </div>
+                {project.serp_api_contents && (
+                  <Button
+                    onClick={handleRefreshResearch}
+                    variant="outline"
+                    size="sm"
+                    className="border-blue-300 text-blue-600 hover:bg-blue-50"
+                    title="Refresh research data"
+                  >
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                    Refresh Research
+                  </Button>
+                )}
+              </div>
+            </CardHeader>
+                        <CardContent className="space-y-4">
+
+              
+              {/* Research Status */}
+              {!project.serp_api_contents ? (
+                <div className="text-center py-8">
+                  <div className="w-16 h-16 mx-auto mb-4 bg-blue-100 rounded-full flex items-center justify-center">
+                    <Search className="h-8 w-8 text-blue-600" />
+                  </div>
+                  <h4 className="text-lg font-medium text-gray-900 mb-2">Research Not Started Yet</h4>
+                  <p className="text-gray-600 mb-4">
+                    Research will be automatically performed when you start content generation.
+                  </p>
+                  <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                    <h5 className="font-medium text-blue-900 mb-2">What happens during research?</h5>
+                    <ul className="text-sm text-blue-800 space-y-1">
+                      <li>• SerpAPI searches for relevant content about your topic</li>
+                      <li>• Extracts SEO keywords for better search rankings</li>
+                      <li>• Finds authoritative external sources and links</li>
+                      <li>• Analyzes content to provide key insights</li>
+                      {project.enhanced_research && (
+                        <li>• Enhanced research: AI-powered queries + content scraping</li>
+                      )}
+                    </ul>
+                  </div>
+                  <div className="mt-4">
+                    <Button
+                      onClick={() => setShowContentGenerationModal(true)}
+                      className="bg-blue-600 hover:bg-blue-700 text-white"
+                    >
+                      Start Content Generation
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <>
+
+
+                  {/* SEO Keywords Display */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="font-medium text-gray-900">
+                        SEO Keywords
+                        {project.extracted_seo_keywords && project.extracted_seo_keywords.length > 0 && (
+                          <span className="ml-2 text-sm text-gray-500">
+                            ({project.extracted_seo_keywords.length})
+                          </span>
+                        )}
+                      </h4>
+                      <div className="flex gap-2">
+                        {project.extracted_seo_keywords && project.extracted_seo_keywords.length > 0 && (
+                          <Button
+                            onClick={async () => {
+                              try {
+                                console.log('🔄 Refreshing project data...');
+                                onUpdate();
+                              } catch (error) {
+                                console.error('❌ Failed to refresh project data:', error);
+                              }
+                            }}
+                            size="sm"
+                            variant="outline"
+                            className="text-xs"
+                          >
+                            <RotateCcw className="h-3 w-3 mr-1" />
+                            Refresh
+                          </Button>
+                        )}
+                        {project.serp_api_contents && !project.extracted_seo_keywords && (
+                          <Button
+                            onClick={async () => {
+                              try {
+                                console.log('🔍 Attempting to extract SEO keywords for project:', project.id);
+                                
+                                const response = await fetch(`http://localhost:8000/api/projects/${project.id}/extract-seo-keywords`, {
+                                  method: 'POST',
+                                  headers: { 
+                                    'Content-Type': 'application/json' 
+                                  }
+                                });
+                                
+                                console.log('📡 Response status:', response.status);
+                                console.log('📡 Response headers:', response.headers);
+                                
+                                if (response.ok) {
+                                  const result = await response.json();
+                                  console.log('✅ SEO keywords extracted successfully:', result);
+                                  // Refresh project data
+                                  onUpdate();
+                                } else {
+                                  const errorText = await response.text();
+                                  console.error('❌ Failed to extract SEO keywords:', response.status, response.statusText);
+                                  console.error('❌ Error details:', errorText);
+                                }
+                              } catch (error) {
+                                console.error('❌ Exception during SEO keywords extraction:', error);
+                              }
+                            }}
+                            size="sm"
+                            variant="outline"
+                            className="text-xs"
+                          >
+                            Extract Keywords
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    
+                    {project.extracted_seo_keywords && project.extracted_seo_keywords.length > 0 ? (
+                      <>
+                        <div className="flex flex-wrap gap-2">
+                          {project.extracted_seo_keywords.map((keyword: string, index: number) => (
+                            <span 
+                              key={index} 
+                              className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800"
+                            >
+                              {keyword}
+                            </span>
+                          ))}
+                        </div>
+                        <p className="text-xs text-gray-600 mt-2">
+                          These keywords are extracted from research and should be naturally incorporated into your content for better SEO.
+                        </p>
+                      </>
+                    ) : (
+                      <div className="text-center py-4">
+                        <p className="text-gray-600">No SEO keywords extracted yet</p>
+                        {project.serp_api_contents && (
+                          <p className="text-xs text-gray-500 mt-1">
+                            Click "Extract Keywords" to extract SEO keywords from research data
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Project Overview */}
       <Card className="bg-white shadow-sm mb-8">
@@ -1035,6 +1297,8 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
           isOpen={showContentGenerationModal}
           projectId={project.id}
           projectName={project.name}
+          serpApiEnabled={project.serp_api_on}
+          serpApiContents={project.serp_api_contents}
           onClose={() => setShowContentGenerationModal(false)}
         />
       )}

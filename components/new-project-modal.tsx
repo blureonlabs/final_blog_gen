@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { X, Globe, Key, AlertTriangle, Brain, CheckCircle, Zap, ChevronDown } from "lucide-react"
+import { X, Globe, Key, AlertTriangle, Brain, CheckCircle, Zap, ChevronDown, Search } from "lucide-react"
 import { supabaseApi, type Project, type UserData } from "@/lib/supabase-api"
 
 interface NewProjectModalProps {
@@ -107,6 +107,24 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
     )
   }
 
+  // Function to reset form state
+  const resetForm = () => {
+    setName("")
+    setDescription("")
+    setNumBlogs(10)
+    setSelectedWordPressAccount("")
+    setSelectedOpenAIKey("")
+    setSelectedGeminiKey("")
+    setSelectedSerpKey("")
+    setSerpApiEnabled(false)
+    setEnhancedResearch(false)
+    setSelectedAIModel("openai")
+    setLoading(false)
+    setError("")
+    setShowUpgradePrompt(false)
+    console.log("🔄 Form reset - SerpAPI:", false, "Enhanced Research:", false)
+  }
+
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
   const [numBlogs, setNumBlogs] = useState(10)
@@ -114,6 +132,15 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
   const [selectedOpenAIKey, setSelectedOpenAIKey] = useState("")
   const [selectedGeminiKey, setSelectedGeminiKey] = useState("")
   const [selectedSerpKey, setSelectedSerpKey] = useState("")
+  
+  // Add SerpAPI toggle state
+  const [serpApiEnabled, setSerpApiEnabled] = useState(false)
+  const [enhancedResearch, setEnhancedResearch] = useState(false)
+  
+  // Debug logging for state changes
+  useEffect(() => {
+    console.log("🔍 State changed - serpApiEnabled:", serpApiEnabled, "enhancedResearch:", enhancedResearch)
+  }, [serpApiEnabled, enhancedResearch])
   
   // Simplified AI model selection - just one model
   const [selectedAIModel, setSelectedAIModel] = useState<"openai" | "gemini">("openai")
@@ -154,6 +181,12 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
     setSelectedOpenAIKey(defaultOpenAI?.id || "")
     setSelectedGeminiKey(defaultGemini?.id || "")
     setSelectedSerpKey(defaultSerp?.id || "")
+    
+    // Reset SerpAPI toggles to default state
+    setSerpApiEnabled(false)
+    setEnhancedResearch(false)
+    
+    console.log("🔄 Modal initialized - SerpAPI:", false, "Enhanced Research:", false)
   }, [userData])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -195,6 +228,14 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
       const selectedGeminiAPI = userData.apiKeys.find((k) => k.id === selectedGeminiKey)
       const selectedSerpAPI = userData.apiKeys.find((k) => k.id === selectedSerpKey)
 
+      // Log final state before submission
+      console.log("🚀 Submitting project with state:", {
+        serpApiEnabled,
+        enhancedResearch,
+        selectedAIModel,
+        numBlogs
+      })
+      
       // Simplified project creation
       const newProject = await supabaseApi.addProject({
         name: name.trim(),
@@ -209,7 +250,11 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
           serp: selectedSerpAPI?.id || (isDemoMode ? "demo-serb-key" : ""),
         },
         // AI Model Configuration - using draft_creation_model from database
-        draft_creation_model: selectedAIModel  // Single model selection
+        draft_creation_model: selectedAIModel,  // Single model selection
+        // Add SerpAPI configuration
+        serp_api_on: serpApiEnabled,
+        serp_api_contents: null,  // Will be populated during research phase
+        enhanced_research: enhancedResearch  // Add enhanced research setting
       })
 
       console.log("✅ Project created successfully:", newProject)
@@ -226,6 +271,7 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
         setTimeout(() => setError(""), 5000)
       }
       
+      resetForm()
       onClose()
     } catch (error: any) {
       console.error("❌ Project creation failed:", error)
@@ -254,6 +300,7 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
           updated_at: new Date().toISOString()
         }
         onSuccess(mockProject)
+        resetForm()
         onClose()
         return
       } else {
@@ -306,7 +353,10 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
               </CardDescription>
             </div>
             <Button
-              onClick={onClose}
+              onClick={() => {
+                resetForm()
+                onClose()
+              }}
               variant="ghost"
               size="sm"
               className="text-gray-400 hover:text-gray-600"
@@ -341,6 +391,7 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
                   </p>
                   <Button
                     onClick={() => {
+                      resetForm()
                       onClose()
                     }}
                     size="sm"
@@ -447,6 +498,106 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
                       : "Best for structured, SEO-optimized content"
                     }
                   </p>
+                </div>
+
+                {/* SerpAPI Research Toggle */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <div className="flex items-center gap-2">
+                      <Search className="h-4 w-4 text-blue-600" />
+                      SerpAPI Research
+                    </div>
+                  </label>
+                  <div className="flex items-center space-x-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newValue = !serpApiEnabled
+                        console.log("🔄 Toggling SerpAPI from", serpApiEnabled, "to", newValue)
+                        setSerpApiEnabled(newValue)
+                        // If disabling SerpAPI, also disable enhanced research
+                        if (!newValue) {
+                          console.log("🔄 Disabling enhanced research because SerpAPI is disabled")
+                          setEnhancedResearch(false)
+                        }
+                      }}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+                        serpApiEnabled ? 'bg-blue-600' : 'bg-gray-200'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          serpApiEnabled ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                    <span className="text-sm text-gray-600">
+                      {serpApiEnabled ? 'Enabled' : 'Disabled'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {serpApiEnabled 
+                      ? "Will research topics using SerpAPI before generating content"
+                      : "Generate content directly without external research"
+                    }
+                  </p>
+                  
+                  {/* Status indicator */}
+                  <div className="mt-2 p-2 bg-gray-50 rounded-md border">
+                    <div className="text-xs text-gray-600">
+                      <strong>Current State:</strong>
+                      <div className="mt-1 space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className={`w-2 h-2 rounded-full ${serpApiEnabled ? 'bg-blue-500' : 'bg-gray-300'}`}></span>
+                          SerpAPI Research: {serpApiEnabled ? 'ON' : 'OFF'}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`w-2 h-2 rounded-full ${enhancedResearch ? 'bg-green-500' : 'bg-gray-300'}`}></span>
+                          Enhanced Research: {enhancedResearch ? 'ON' : 'OFF'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Enhanced Research Toggle (only shown when SerpAPI is enabled) */}
+                  {serpApiEnabled && (
+                    <div className="mt-3 pl-4 border-l-2 border-blue-200">
+                      <label className="block text-sm font-medium text-gray-600 mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs">🚀</span>
+                          Enhanced Research
+                        </div>
+                      </label>
+                      <div className="flex items-center space-x-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const newValue = !enhancedResearch
+                            console.log("🔄 Toggling Enhanced Research from", enhancedResearch, "to", newValue)
+                            setEnhancedResearch(newValue)
+                          }}
+                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+                            enhancedResearch ? 'bg-green-600' : 'bg-gray-200'
+                          }`}
+                        >
+                          <span
+                            className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                              enhancedResearch ? 'translate-x-5' : 'translate-x-1'
+                            }`}
+                          />
+                        </button>
+                        <span className="text-xs text-gray-600">
+                          {enhancedResearch ? 'Enabled' : 'Disabled'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {enhancedResearch 
+                          ? "AI-powered queries, external links research, and content scraping"
+                          : "Standard research with basic search queries"
+                        }
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

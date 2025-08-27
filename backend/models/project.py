@@ -11,6 +11,8 @@ class ProjectBase(BaseModel):
     draft_creation_model: Optional[str] = Field(None, description="AI model to use for draft creation")
     wordpress_account_id: Optional[UUID] = Field(None, description="WordPress account ID")
     api_keys: Optional[Dict[str, Any]] = Field(None, description="API keys configuration")
+    serp_api_on: Optional[bool] = Field(False, description="Enable SerpAPI research for this project")
+    enhanced_research: Optional[bool] = Field(False, description="Enable enhanced research features (AI queries, external links, content scraping)")
 
 class ProjectCreate(ProjectBase):
     """Model for creating a new project"""
@@ -41,6 +43,10 @@ class ProjectResponse(BaseModel):
     api_keys: Optional[Dict[str, Any]] = Field(None, description="API keys configuration")
     settings: Optional[Dict[str, Any]] = Field(None, description="Project settings")
     draft_creation_model: Optional[str] = Field(None, description="AI model to use for content generation")
+    serp_api_on: Optional[bool] = Field(False, description="Enable SerpAPI research for this project")
+    enhanced_research: Optional[bool] = Field(False, description="Enable enhanced research features (AI queries, external links, content scraping)")
+    serp_api_contents: Optional[Dict[str, Any]] = Field(None, description="SerpAPI research results and insights")
+    extracted_seo_keywords: Optional[List[str]] = Field(None, description="Extracted SEO keywords for easy display")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
     
