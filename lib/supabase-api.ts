@@ -179,7 +179,7 @@ class SupabaseAPI {
       // Get current account details for logging
       const { data: currentAccount } = await supabase
         .from('wordpress_accounts')
-        .select('name, site_url')
+        .select('name, site_url, username')
         .eq('id', id)
         .eq('user_id', userId)
         .single()
@@ -195,19 +195,17 @@ class SupabaseAPI {
 
       if (error) throw error
 
-      console.log('✅ WordPress account updated successfully:', {
-        account_id: id,
-        account_name: currentAccount?.name || 'Unknown',
-        site_url: currentAccount?.site_url || 'Unknown',
-        updated_fields: Object.keys(updates)
-      })
+      // Prepare logging data with NEW values being applied
+      const logData: any = {
+        account_name: updates.name || currentAccount?.name || 'Unknown',
+        site_url: updates.site_url || currentAccount?.site_url || 'Unknown',
+        username: updates.username || currentAccount?.username || 'Unknown'
+      }
+
+      console.log('✅ WordPress account updated successfully:', logData)
 
       // Log the activity using the existing supabaseLogger pattern
-      this.logActivity('wordpress_account_updated', {
-        site_url: currentAccount?.site_url || '',
-        account_id: id,
-        account_name: currentAccount?.name || 'Unknown'
-      }).catch(logError => {
+      this.logActivity('wordpress_account_updated', logData).catch(logError => {
         // Don't let logging errors affect the main operation
         console.warn('Failed to log activity (non-critical):', logError)
       })
@@ -406,7 +404,7 @@ class SupabaseAPI {
       // Get current key details for logging
       const { data: currentKey } = await supabase
         .from('api_keys')
-        .select('name, service')
+        .select('name, service, api_key, is_default, is_active')
         .eq('id', id)
         .eq('user_id', userId)
         .single()
@@ -419,19 +417,16 @@ class SupabaseAPI {
 
       if (error) throw error
 
-      console.log('✅ API key updated successfully:', {
-        key_id: id,
-        key_name: currentKey?.name || 'Unknown',
-        service: currentKey?.service || 'Unknown',
-        updated_fields: Object.keys(updates)
-      })
+      // Prepare logging data with NEW values being applied
+      const logData: any = {
+        key_name: updates.name || currentKey?.name || 'Unknown',
+        service: currentKey?.service || 'Unknown'  // Service typically doesn't change
+      }
+
+      console.log('✅ API key updated successfully:', logData)
 
       // Log the activity using the same pattern
-      this.logActivity('api_key_updated', {
-        key_id: id,
-        key_name: currentKey?.name || 'Unknown',
-        service: currentKey?.service || 'Unknown'
-      }).catch(logError => {
+      this.logActivity('api_key_updated', logData).catch(logError => {
         // Don't let logging errors affect the main operation
         console.warn('Failed to log activity (non-critical):', logError)
       })

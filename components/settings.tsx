@@ -70,11 +70,16 @@ export function Settings({ onUpdate }: SettingsProps) {
 
   const refreshData = async () => {
     try {
+      console.log("🔄 Refreshing user data...")
+      
+      // Add a small random delay to avoid cache issues
+      const randomDelay = Math.random() * 1000
+      await new Promise(resolve => setTimeout(resolve, randomDelay))
+      
       const data = await supabaseApi.getUserData()
+      console.log("✅ Fresh data received:", data)
+      
       setUserData(data)
-      // Reset editing states when refreshing
-      setEditingApiKeys({})
-      setEditingWordPressAccounts({})
       onUpdate()
     } catch (error) {
       console.error("Error refreshing user data:", error)
@@ -128,14 +133,60 @@ export function Settings({ onUpdate }: SettingsProps) {
         console.log("No changes to save")
       }
       
-      setMessage("Settings saved successfully!")
+          setMessage("Settings saved successfully!")
+    
+    // Immediately update local state with the saved changes to show them in the UI
+    setUserData(prevData => {
+      if (!prevData) return prevData
       
-      // Clear editing states after successful save
-      setEditingApiKeys({})
-      setEditingWordPressAccounts({})
+      let newData = { ...prevData }
       
-      // Refresh data to show updated values
+      // Apply API key changes immediately
+      Object.entries(editingApiKeys).forEach(([keyId, apiKey]) => {
+        newData.apiKeys = newData.apiKeys.map(key => 
+          key.id === keyId ? { ...key, ...apiKey } : key
+        )
+      })
+      
+      // Apply WordPress account changes immediately
+      Object.entries(editingWordPressAccounts).forEach(([accountId, account]) => {
+        newData.wordpressAccounts = newData.wordpressAccounts.map(acc => 
+          acc.id === accountId ? { ...acc, ...account } : acc
+        )
+      })
+      
+      console.log("🔄 Updated local state with saved changes:", newData)
+      return newData
+    })
+    
+    // Clear editing states after successful save
+    setEditingApiKeys({})
+    setEditingWordPressAccounts({})
+    
+    // Force multiple refresh attempts to ensure database consistency
+    // This addresses Supabase caching and transaction isolation issues
+    try {
+      console.log("🔄 Starting multi-stage refresh process...")
+      
+      // Stage 1: Immediate refresh
+      console.log("🔄 Stage 1: Immediate refresh")
       await refreshData()
+      
+      // Stage 2: Medium delay refresh
+      console.log("🔄 Stage 2: Medium delay refresh (3s)")
+      await new Promise(resolve => setTimeout(resolve, 3000))
+      await refreshData()
+      
+      // Stage 3: Final delayed refresh
+      console.log("🔄 Stage 3: Final delayed refresh (2s)")
+      await new Promise(resolve => setTimeout(resolve, 2000))
+      await refreshData()
+      
+      console.log("✅ Multi-stage refresh completed")
+      
+    } catch (refreshError) {
+      console.warn("Some refresh attempts failed, but data was saved:", refreshError)
+    }
     } catch (error) {
       console.error("Error saving user data:", error)
       if (error instanceof Error) {
@@ -626,7 +677,7 @@ export function Settings({ onUpdate }: SettingsProps) {
                           size="sm"
                           className="text-gray-500 hover:text-gray-700"
                         >
-                          <Edit className="h-4 w-4" />
+                          <Edit className="h-4 w-4" />i
                         </Button>
                         <Button
                           onClick={() => deleteWordPressAccount(account.id)}
