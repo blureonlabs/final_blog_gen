@@ -364,7 +364,7 @@ async def retry_failed_blog(blog_id: str) -> Dict[str, Any]:
         supabase = supabase_client
         
         # Get the failed blog
-        blog_response = await supabase.table("blogs").select("*").eq("id", blog_id).execute()
+        blog_response = supabase.table("blogs").select("*").eq("id", blog_id).execute()
         
         if not blog_response.data:
             return {"success": False, "error": "Blog not found"}
@@ -394,7 +394,7 @@ async def retry_failed_blog(blog_id: str) -> Dict[str, Any]:
             ]
         }
         
-        result = await supabase.table("blogs").update(update_data).eq("id", blog_id).execute()
+        result = supabase.table("blogs").update(update_data).eq("id", blog_id).execute()
         
         if result.data:
             return {

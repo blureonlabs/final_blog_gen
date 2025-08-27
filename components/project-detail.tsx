@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { BlogPreviewModal } from "@/components/blog-preview-modal"
-import { ArrowLeft, FileText, Eye, ExternalLink, Clock, CheckCircle, XCircle, Upload } from "lucide-react"
+import { WordPressPublishModal } from "@/components/wordpress-publish-modal"
+import { ArrowLeft, FileText, Eye, ExternalLink, Clock, CheckCircle, XCircle, Upload, RotateCcw } from "lucide-react"
 import { storage, type Project, type Blog } from "@/lib/storage"
 import { ContentGenerationModal } from "@/components/content-generation-modal"
 
@@ -22,6 +23,8 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
   const [loading, setLoading] = useState(true)
   const [selectedBlog, setSelectedBlog] = useState<Blog | null>(null)
   const [showContentGenerationModal, setShowContentGenerationModal] = useState(false)
+  const [showWordPressPublishModal, setShowWordPressPublishModal] = useState(false)
+  const [blogToPublish, setBlogToPublish] = useState<Blog | null>(null)
   const [isGeneratingContent, setIsGeneratingContent] = useState(false)
 
   useEffect(() => {
@@ -104,7 +107,6 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
                  published_at: blog.status === "ready" ? blog.created_at : undefined,
                  content: "", // Content is now stored in Supabase Storage, not in database
                  prompt: blog.prompt || "",
-                 ai_model: blog.ai_model || "",
                  wordpress_url: blog.wordpress_url || null,
                  storage_path: blog.storage_path || null,
                  storage_bucket: blog.storage_bucket || null
@@ -151,7 +153,6 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
              published_at: status === "published" ? new Date().toISOString() : undefined,
              content: blogContent,
              prompt: `Generate content about ${foundProject.name}`,
-             ai_model: "openai",
              wordpress_url: status === "published" ? `https://yourwordpress.com/blog-${blogIndex}` : `https://yourwordpress.com/draft-${blogIndex}`,
              storage_path: `blogs/${foundProject.id}/mock_${blogIndex}.json`,
              storage_bucket: "blog-content"
@@ -175,6 +176,8 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
         return "generating"
       case "draft":
         return "draft"
+      case "published":
+        return "published"  // Add support for published status
       case "failed":
         return "failed"
       case "pending":
@@ -374,9 +377,9 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
   }
 
   const handleRegenerateFailed = () => {
-    console.log("[v0] Regenerating failed blogs...")
+    console.log("[v0] Republishing failed blogs...")
     const updatedBlogs = blogs.map((blog) =>
-      blog.status === "failed" ? { ...blog, status: "generating" as Blog["status"] } : blog,
+      blog.status === "failed" ? { ...blog, status: "ready" as Blog["status"] } : blog,
     )
     setBlogs(updatedBlogs)
 
@@ -428,33 +431,39 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
 
   const handlePublishSingle = (blogId: string) => {
     console.log(`[v0] Publishing single blog: ${blogId}`)
-    const updatedBlogs = blogs.map((blog) =>
-      blog.id === blogId && blog.status === "draft" ? { ...blog, status: "publishing" as Blog["status"] } : blog,
-    )
-    setBlogs(updatedBlogs)
+    const blogToPublish = blogs.find(blog => blog.id === blogId);
+    if (blogToPublish) {
+      setBlogToPublish(blogToPublish);
+      setShowWordPressPublishModal(true);
+    }
+  }
 
-    // Simulate publishing process
-    setTimeout(() => {
-      const publishedBlogs = updatedBlogs.map((blog) =>
-        blog.id === blogId && blog.status === "publishing"
-          ? {
+  const refreshBlogList = async () => {
+    if (!project) return;
+    
+    try {
+      console.log("🔄 Refreshing blog list...")
+      const response = await fetch(`http://localhost:8000/api/blogs/project/${project.id}`)
+      
+      if (response.ok) {
+        const apiData = await response.json()
+        if (apiData.blogs && apiData.blogs.length > 0) {
+          const mappedBlogs = apiData.blogs.map((blog: any) => {
+            const mappedStatus = mapBackendStatusToFrontend(blog.status)
+            return {
               ...blog,
-              status: "published" as Blog["status"],
-              published_at: new Date().toISOString(),
+              status: mappedStatus,
+              created_at: blog.created_at || new Date().toISOString(),
+              word_count: blog.word_count || 0
             }
-          : blog,
-      )
-      setBlogs(publishedBlogs)
-
-      if (project) {
-        const newCompletedCount = publishedBlogs.filter((b) => b.status === "published").length
-        storage.updateProject(project.id, {
-          completed_blogs: newCompletedCount,
-          updated_at: new Date().toISOString(),
-        })
-        onUpdate()
+          })
+          setBlogs(mappedBlogs)
+          console.log("✅ Blog list refreshed:", mappedBlogs.length, "blogs")
+        }
       }
-    }, 1000)
+    } catch (error) {
+      console.error("❌ Error refreshing blog list:", error)
+    }
   }
 
   const handleStartContentGeneration = async () => {
@@ -732,7 +741,7 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
               className="border-red-300 text-red-600 hover:bg-red-50 bg-transparent"
             >
               <XCircle className="h-4 w-4 mr-2" />
-              Regenerate Failed ({failedBlogs})
+              Republish Failed ({failedBlogs})
             </Button>
           )}
 
@@ -752,6 +761,16 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
               Publish All Drafts ({draftBlogs})
             </Button>
           )}
+
+          <Button 
+            onClick={refreshBlogList} 
+            variant="outline" 
+            size="sm"
+            className="border-gray-300 text-gray-600 hover:bg-gray-50"
+          >
+            <RotateCcw className="h-4 w-4 mr-2" />
+            Refresh Blogs
+          </Button>
         </div>
       </div>
 
@@ -960,7 +979,7 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
                       </div>
                     )}
 
-                    {blog.status === "draft" && (
+                    {(blog.status === "draft" || blog.status === "ready") && (
                       <Button
                         onClick={() => handlePublishSingle(blog.id)}
                         variant="outline"
@@ -1017,6 +1036,23 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
           projectId={project.id}
           projectName={project.name}
           onClose={() => setShowContentGenerationModal(false)}
+        />
+      )}
+
+      {/* WordPress Publish Modal */}
+      {showWordPressPublishModal && blogToPublish && (
+        <WordPressPublishModal
+          isOpen={showWordPressPublishModal}
+          blogId={blogToPublish.id}
+          blogTitle={blogToPublish.title}
+          onClose={() => setShowWordPressPublishModal(false)}
+          onSuccess={() => {
+            setBlogToPublish(null);
+            setShowWordPressPublishModal(false);
+            onUpdate();
+            // Refresh the blog list to show updated statuses
+            refreshBlogList();
+          }}
         />
       )}
     </div>

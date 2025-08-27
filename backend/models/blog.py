@@ -103,7 +103,6 @@ class BlogPreview(BaseModel):
 
 class BlogPublishRequest(BaseModel):
     """Model for publishing a blog to WordPress"""
-    blog_id: UUID
     wordpress_account_id: UUID
     publish_status: str = "draft"  # draft or publish
     categories: Optional[List[str]] = None
