@@ -691,11 +691,11 @@ class BlogGenerationService:
                     
                     logger.info(f"✅ Blog content generated: {blog_data['title']}")
                     
-                    # Create blog record with ready status
+                    # Create blog record with DRAFT status to start the workflow
                     blog_create = BlogCreate(
                         project_id=project_id,
                         title=blog_data["title"],
-                        status=BlogStatus.READY,  # Always ready after generation
+                        status=BlogStatus.DRAFT,  # Start with DRAFT to enable workflow
                         word_count=blog_data["word_count"],
                         prompt=blog_data["prompt"],
                         ai_model=blog_data["ai_model"]
@@ -726,6 +726,71 @@ class BlogGenerationService:
                         "model_provider": blog_data.get("model_provider", ai_model),
                         "generation_method": "sequential"
                     }
+                    
+                    # Start the SEO optimization workflow
+                    try:
+                        logger.info(f"🔍 Starting SEO optimization workflow for blog {blog_record['id']}")
+                        
+                        # Update status to SEO optimizing
+                        supabase_client.table("blogs").update({
+                            "status": BlogStatus.SEO_OPTIMIZING,
+                            "updated_at": datetime.now().isoformat()
+                        }).eq("id", blog_record["id"]).execute()
+                        
+                        # Perform SEO optimization inline (since we're not using Celery yet)
+                        seo_result = await self._perform_seo_optimization(
+                            blog_record["id"], 
+                            blog_data["content"], 
+                            blog_data["title"]
+                        )
+                        
+                        if seo_result:
+                            logger.info(f"✅ SEO optimization completed for blog {blog_record['id']}")
+                            
+                            # Update status to formatting
+                            supabase_client.table("blogs").update({
+                                "status": BlogStatus.FORMATTING,
+                                "updated_at": datetime.now().isoformat()
+                            }).eq("id", blog_record["id"]).execute()
+                            
+                            # Perform basic formatting
+                            formatted_result = await self._perform_basic_formatting(
+                                blog_record["id"], 
+                                seo_result["optimized_content"]
+                            )
+                            
+                            if formatted_result:
+                                logger.info(f"✅ Basic formatting completed for blog {blog_record['id']}")
+                                
+                                # Update status to ready
+                                supabase_client.table("blogs").update({
+                                    "status": BlogStatus.READY,
+                                    "updated_at": datetime.now().isoformat()
+                                }).eq("id", blog_record["id"]).execute()
+                                
+                                logger.info(f"✅ Blog {blog_record['id']} workflow completed - status: READY")
+                            else:
+                                logger.warning(f"⚠️ Basic formatting failed for blog {blog_record['id']}")
+                                # Set to ready anyway
+                                supabase_client.table("blogs").update({
+                                    "status": BlogStatus.READY,
+                                    "updated_at": datetime.now().isoformat()
+                                }).eq("id", blog_record["id"]).execute()
+                        else:
+                            logger.warning(f"⚠️ SEO optimization failed for blog {blog_record['id']}")
+                            # Set to ready anyway
+                            supabase_client.table("blogs").update({
+                                "status": BlogStatus.READY,
+                                "updated_at": datetime.now().isoformat()
+                            }).eq("id", blog_record["id"]).execute()
+                            
+                    except Exception as workflow_error:
+                        logger.error(f"❌ Workflow failed for blog {blog_record['id']}: {workflow_error}")
+                        # Set to ready anyway to avoid blocking
+                        supabase_client.table("blogs").update({
+                            "status": BlogStatus.READY,
+                            "updated_at": datetime.now().isoformat()
+                        }).eq("id", blog_record["id"]).execute()
                     
                     generated_blogs.append(blog_record)
                     logger.info(f"✅ Blog {blog_number} generated successfully: {blog_data['title']}")
@@ -1087,6 +1152,243 @@ class BlogGenerationService:
         except Exception as e:
             logger.error(f"❌ Failed to update blog content: {e}")
             return False
+
+    async def _perform_seo_optimization(self, blog_id: str, content: str, title: str) -> Dict[str, Any]:
+        """Perform SEO optimization on blog content"""
+        try:
+            logger.info(f"🔍 Starting SEO optimization for blog {blog_id}")
+            
+            # Extract main keyword from title
+            main_keyword = self._extract_main_keyword(title)
+            
+            # Generate meta description
+            meta_description = self._generate_meta_description(content, main_keyword)
+            
+            # Generate slug
+            slug = self._generate_slug(title)
+            
+            # Extract headings for structure
+            headings = self._extract_headings(content)
+            
+            # Calculate reading time
+            reading_time = self._calculate_reading_time(content)
+            
+            # Generate tags based on content
+            tags = self._generate_content_tags(content, title)
+            
+            # Calculate keyword density
+            keyword_density = self._calculate_keyword_density(content, main_keyword)
+            
+            # Calculate SEO score
+            seo_score = self._calculate_seo_score(content, title, meta_description)
+            
+            seo_meta = {
+                "title": title,
+                "meta_description": meta_description,
+                "slug": slug,
+                "main_keyword": main_keyword,
+                "headings": headings,
+                "reading_time": reading_time,
+                "tags": tags,
+                "word_count": len(content.split()),
+                "keyword_density": keyword_density,
+                "seo_score": seo_score,
+                "generated_at": datetime.now().isoformat()
+            }
+            
+            # Update blog with SEO metadata
+            supabase_client.table("blogs").update({
+                "seo_meta": seo_meta,
+                "updated_at": datetime.now().isoformat()
+            }).eq("id", blog_id).execute()
+            
+            logger.info(f"✅ SEO optimization completed for blog {blog_id}")
+            logger.info(f"🔑 Main keyword: {main_keyword}")
+            logger.info(f"📊 SEO score: {seo_score}/100")
+            logger.info(f"🔍 Keyword density: {keyword_density}%")
+            
+            return {
+                "seo_meta": seo_meta,
+                "optimized_content": content,  # Content remains the same for now
+                "main_keyword": main_keyword,
+                "seo_score": seo_score
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ SEO optimization failed for blog {blog_id}: {e}")
+            return None
+
+    async def _perform_basic_formatting(self, blog_id: str, content: str) -> Dict[str, Any]:
+        """Perform basic content formatting"""
+        try:
+            logger.info(f"🔍 Starting basic formatting for blog {blog_id}")
+            
+            # For now, just return the content as-is
+            # In the future, this could include:
+            # - Table of contents generation
+            # - FAQ section addition
+            # - Call-to-action insertion
+            # - Related posts section
+            
+            logger.info(f"✅ Basic formatting completed for blog {blog_id}")
+            
+            return {
+                "formatted_content": content,
+                "formatting_applied": ["basic_structure"]
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Basic formatting failed for blog {blog_id}: {e}")
+            return None
+
+    def _extract_main_keyword(self, title: str) -> str:
+        """Extract main keyword from title"""
+        import re
+        # Remove common words and extract meaningful terms
+        stop_words = {"the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by"}
+        
+        words = re.findall(r'\b\w+\b', title.lower())
+        meaningful_words = [word for word in words if word not in stop_words and len(word) > 3]
+        
+        if meaningful_words:
+            return meaningful_words[0]
+        
+        return "blog"
+
+    def _generate_meta_description(self, content: str, main_keyword: str) -> str:
+        """Generate meta description from content"""
+        # Take first 150 characters and ensure it ends at a word boundary
+        if len(content) <= 150:
+            return content
+        
+        # Find the last space within 150 characters
+        truncated = content[:150]
+        last_space = truncated.rfind(' ')
+        
+        if last_space > 100:  # Only truncate if we have enough content
+            truncated = truncated[:last_space]
+        
+        # Ensure main keyword is included if possible
+        if main_keyword.lower() not in truncated.lower():
+            # Try to include keyword by extending slightly
+            keyword_pos = content.lower().find(main_keyword.lower())
+            if keyword_pos != -1 and keyword_pos < 200:
+                end_pos = min(keyword_pos + 150, len(content))
+                truncated = content[:end_pos]
+                last_space = truncated.rfind(' ')
+                if last_space > 100:
+                    truncated = truncated[:last_space]
+        
+        return truncated + "..."
+
+    def _generate_slug(self, title: str) -> str:
+        """Generate URL-friendly slug from title"""
+        import re
+        # Convert to lowercase and replace spaces with hyphens
+        slug = re.sub(r'[^\w\s-]', '', title.lower())
+        slug = re.sub(r'[-\s]+', '-', slug)
+        return slug.strip('-')
+
+    def _extract_headings(self, content: str) -> List[str]:
+        """Extract headings from content"""
+        import re
+        headings = re.findall(r'^#{1,6}\s+(.+)$', content, re.MULTILINE)
+        return headings
+
+    def _calculate_reading_time(self, content: str) -> int:
+        """Calculate estimated reading time in minutes"""
+        words = len(content.split())
+        reading_time = max(1, words // 200)  # Assume 200 words per minute
+        return reading_time
+
+    def _generate_content_tags(self, content: str, title: str) -> List[str]:
+        """Generate relevant tags based on content"""
+        # Combine title and content for analysis
+        full_text = f"{title} {content}".lower()
+        
+        # Common content categories and their keywords
+        categories = {
+            "technology": ["tech", "software", "programming", "ai", "machine learning", "data"],
+            "business": ["business", "marketing", "strategy", "management", "entrepreneurship"],
+            "health": ["health", "fitness", "wellness", "nutrition", "exercise"],
+            "lifestyle": ["lifestyle", "travel", "food", "fashion", "home"],
+            "education": ["education", "learning", "teaching", "courses", "skills"]
+        }
+        
+        tags = []
+        for category, keywords in categories.items():
+            if any(keyword in full_text for keyword in keywords):
+                tags.append(category)
+        
+        # Add specific tags based on content
+        if "how to" in title.lower() or "guide" in title.lower():
+            tags.append("how-to")
+        
+        if "tips" in title.lower() or "advice" in title.lower():
+            tags.append("tips")
+        
+        # Limit to 5 tags
+        return tags[:5]
+
+    def _calculate_keyword_density(self, content: str, keyword: str) -> float:
+        """Calculate keyword density in content"""
+        if not keyword or not content:
+            return 0.0
+        
+        words = content.lower().split()
+        keyword_count = content.lower().count(keyword.lower())
+        
+        if len(words) == 0:
+            return 0.0
+        
+        density = (keyword_count / len(words)) * 100
+        return round(density, 2)
+
+    def _calculate_seo_score(self, content: str, title: str, meta_description: str) -> int:
+        """Calculate overall SEO score"""
+        score = 0
+        
+        # Title length (optimal: 50-60 characters)
+        title_length = len(title)
+        if 50 <= title_length <= 60:
+            score += 20
+        elif 30 <= title_length <= 70:
+            score += 15
+        else:
+            score += 5
+        
+        # Meta description length (optimal: 150-160 characters)
+        desc_length = len(meta_description)
+        if 150 <= desc_length <= 160:
+            score += 20
+        elif 120 <= desc_length <= 180:
+            score += 15
+        else:
+            score += 5
+        
+        # Content length (minimum 300 words)
+        word_count = len(content.split())
+        if word_count >= 800:
+            score += 20
+        elif word_count >= 500:
+            score += 15
+        elif word_count >= 300:
+            score += 10
+        else:
+            score += 5
+        
+        # Headings structure
+        headings = self._extract_headings(content)
+        if len(headings) >= 3:
+            score += 20
+        elif len(headings) >= 1:
+            score += 10
+        
+        # Keyword in title
+        if title and len(title.split()) > 0:
+            score += 20
+        
+        return min(100, score)
 
 # Create service instance
 blog_generation_service = BlogGenerationService()

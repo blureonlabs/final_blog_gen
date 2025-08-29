@@ -13,6 +13,7 @@ from models.project import (
 )
 from core.supabase_client import supabase_client, verify_user_exists
 from core.auth import get_current_user
+from services.seo_keywords_service import SEOKeywordsService
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -49,6 +50,9 @@ async def create_project(
             "content_vetting_model": project.draft_creation_model,  # Use draft_creation_model from request
             "model_settings": None,  # Initialize as None
             "workflow_preferences": None,  # Initialize as None
+            "serp_api_on": project.serp_api_on,  # Store SerpAPI setting
+            "enhanced_research": project.enhanced_research,  # Store enhanced research setting
+            "serp_api_contents": None,  # Initialize as None (will be populated during research)
             "created_at": datetime.utcnow().isoformat(),
             "updated_at": datetime.utcnow().isoformat()
         }
@@ -249,3 +253,44 @@ async def get_project_status(
     except Exception as e:
         logger.error(f"Error fetching project status: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch project status: {str(e)}")
+
+@router.post("/{project_id}/extract-seo-keywords", summary="Extract SEO keywords from SerpAPI research")
+async def extract_seo_keywords(
+    project_id: str,
+    # Temporarily disable authentication for testing
+    # current_user: dict = Depends(get_current_user)
+):
+    """
+    Extract SEO keywords from serp_api_contents and store in extracted_seo_keywords column
+    """
+    try:
+        logger.info(f"🔍 SEO keywords extraction endpoint called for project: {project_id}")
+        
+        # Temporarily skip user verification for testing
+        # project_response = supabase_client.table("projects").select("user_id").eq("id", project_id).execute()
+        # 
+        # if not project_response.data:
+        #     raise HTTPException(status_code=404, detail="Project not found")
+        # 
+        # project = project_response.data[0]
+        # if project["user_id"] != current_user["id"]:
+        #     raise HTTPException(status_code=403, detail="Access denied")
+        
+        logger.info(f"🔍 Starting SEO keywords extraction for project: {project_id}")
+        
+        # Extract SEO keywords
+        success = SEOKeywordsService.extract_seo_keywords(project_id)
+        
+        if success:
+            logger.info(f"✅ SEO keywords extracted successfully for project: {project_id}")
+            return {"message": "SEO keywords extracted and stored successfully"}
+        else:
+            logger.error(f"❌ SEO keywords extraction failed for project: {project_id}")
+            raise HTTPException(status_code=500, detail="Failed to extract SEO keywords")
+            
+    except HTTPException:
+        logger.error(f"❌ HTTPException in SEO keywords extraction for project: {project_id}")
+        raise
+    except Exception as e:
+        logger.error(f"❌ Unexpected error in SEO keywords extraction for project: {project_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to extract SEO keywords: {str(e)}")

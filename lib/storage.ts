@@ -15,6 +15,11 @@ export interface Project {
   settings: any
   // Simplified AI Model Configuration - just one model
   draft_creation_model?: "openai" | "gemini"  // Single model selection
+  // SerpAPI Research Configuration
+  serp_api_on?: boolean
+  serp_api_contents?: any
+  enhanced_research?: boolean  // Enable enhanced research features
+  extracted_seo_keywords?: string[]  // Extracted SEO keywords for easy display
   created_at: string
   updated_at: string
 }
