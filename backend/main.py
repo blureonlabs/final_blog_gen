@@ -7,7 +7,7 @@ import uvicorn
 from dotenv import load_dotenv
 import os
 
-from routers import projects, wordpress_accounts, api_keys, blogs, content_generation
+from routers import projects, wordpress_accounts, api_keys, blogs, content_generation, image_generation, image_processing
 from core.config import settings
 from core.supabase_client import supabase_client
 from swagger_config import custom_openapi_schema, API_METADATA
@@ -81,6 +81,14 @@ app = FastAPI(
         {
             "name": "documentation",
             "description": "API documentation and schema endpoints."
+        },
+        {
+            "name": "image-generation",
+            "description": "AI-powered image generation for blog posts using Fal AI FLUX.1 model."
+        },
+        {
+            "name": "image-processing",
+            "description": "Processing of image placeholders in blog content and S3 storage integration."
         }
     ],
     lifespan=lifespan
@@ -101,6 +109,8 @@ app.include_router(wordpress_accounts.router, prefix="/api/wordpress-accounts", 
 app.include_router(api_keys.router, prefix="/api/api-keys", tags=["api-keys"])
 app.include_router(blogs.router, prefix="/api/blogs", tags=["blogs"])
 app.include_router(content_generation.router, prefix="/api", tags=["content-generation"])
+app.include_router(image_generation.router, prefix="/api/images", tags=["image-generation"])
+app.include_router(image_processing.router, prefix="/api/image-processing", tags=["image-processing"])
 
 @app.get("/", 
     summary="API Status",
@@ -133,7 +143,9 @@ async def root():
             "content_generation": "/api/content-generation",
             "wordpress_accounts": "/api/wordpress-accounts",
             "api_keys": "/api/api-keys",
-            "blogs": "/api/blogs"
+            "blogs": "/api/blogs",
+            "image_generation": "/api/images",
+            "image_processing": "/api/image-processing"
         }
     }
 

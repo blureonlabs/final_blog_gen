@@ -6,6 +6,7 @@ from datetime import datetime
 import re
 
 from .fal_ai_service import FalAIService
+from core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +126,7 @@ class ImageGenerationService:
     async def generate_blog_images(
         self,
         blog_id: str,
+        project_id: str,
         title: str,
         content: str,
         seo_meta: Dict = None,
@@ -138,6 +140,7 @@ class ImageGenerationService:
         
         Args:
             blog_id: ID of the blog post
+            project_id: ID of the project
             title: Blog post title
             content: Blog post content
             seo_meta: SEO metadata including keywords
@@ -176,13 +179,15 @@ class ImageGenerationService:
                     return {
                         "success": True,
                         "blog_id": blog_id,
+                        "project_id": project_id,
                         "images": [{
                             "url": result["image_url"],
                             "prompt": prompt,
                             "style": style,
                             "aspect_ratio": aspect_ratio,
                             "quality": quality,
-                            "generated_at": datetime.utcnow().isoformat()
+                            "generated_at": datetime.utcnow().isoformat(),
+                            "image_number": 1
                         }],
                         "total_generated": 1,
                         "requested_count": 1,
@@ -201,9 +206,15 @@ class ImageGenerationService:
                 )
                 
                 if result["success"]:
+                    # Add image numbers to the results
+                    for i, img in enumerate(result["images"]):
+                        img["image_number"] = i + 1
+                        img["project_id"] = project_id
+                    
                     return {
                         "success": True,
                         "blog_id": blog_id,
+                        "project_id": project_id,
                         "images": result["images"],
                         "total_generated": result["total_generated"],
                         "requested_count": result["requested_count"],

@@ -335,6 +335,12 @@ async def generate_blogs_direct(
         
         logger.info(f"🚀 Starting blog generation with service...")
         
+        # Get project image generation settings
+        project_response = supabase.table("projects").select("generate_images, num_images_per_blog").eq("id", str(request.project_id)).execute()
+        project_data = project_response.data[0] if project_response.data else {}
+        generate_images = project_data.get("generate_images", False)
+        num_images_per_blog = project_data.get("num_images_per_blog", 1)
+        
         # Generate blogs using the service with project details and API keys
         # Use the user's selected AI model
         generated_blogs = await blog_generation_service.generate_blogs_for_project(
@@ -343,7 +349,9 @@ async def generate_blogs_direct(
             num_blogs=request.num_blogs,
             ai_model=ai_model,  # Use user's selected AI model
             project_api_keys=project_api_keys,
-            max_concurrent_blogs=getattr(request, 'max_concurrent_blogs', 5)
+            max_concurrent_blogs=getattr(request, 'max_concurrent_blogs', 5),
+            generate_images=generate_images,
+            num_images_per_blog=num_images_per_blog
         )
         
         logger.info(f"✅ Blog generation completed: {len(generated_blogs)} blogs generated")

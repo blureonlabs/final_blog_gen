@@ -11,6 +11,7 @@ from core.config import settings
 from core.supabase_client import supabase_client
 from models.blog import BlogCreate, BlogStatus
 from services.s3_storage_service import S3StorageService
+from services.image_placeholder_processor import ImagePlaceholderProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ class BlogGenerationService:
         self.openai_client = None
         self.gemini_client = None
         self.s3_storage = S3StorageService()
+        self.image_processor = ImagePlaceholderProcessor()
         self._initialize_clients()
     
     def _initialize_clients(self):
@@ -36,7 +38,9 @@ class BlogGenerationService:
         project_description: str, 
         blog_number: int, 
         ai_model: str, 
-        project_api_keys: dict = None
+        project_api_keys: dict = None,
+        generate_images: bool = False,
+        num_images_per_blog: int = 1
     ) -> Dict[str, Any]:
         """Generate blog content using specified AI model with fallback to Gemini if OpenAI fails"""
         try:
@@ -52,7 +56,7 @@ class BlogGenerationService:
                     logger.info(f"✅ Using project-specific OpenAI key")
                     try:
                         # Try OpenAI first
-                        return await self._generate_with_openai(project_description, blog_number, project_api_keys["openai"])
+                        return await self._generate_with_openai(project_description, blog_number, project_api_keys["openai"], generate_images, num_images_per_blog)
                     except Exception as openai_error:
                         logger.warning(f"⚠️ OpenAI generation failed: {openai_error}")
                         logger.info(f"🔄 Attempting fallback to Gemini...")
@@ -61,7 +65,7 @@ class BlogGenerationService:
                         if project_api_keys and project_api_keys.get("gemini"):
                             logger.info(f"✅ Fallback: Using Gemini for blog {blog_number}")
                             try:
-                                return await self._generate_with_gemini(project_description, blog_number, project_api_keys["gemini"])
+                                return await self._generate_with_gemini(project_description, blog_number, project_api_keys["gemini"], generate_images, num_images_per_blog)
                             except Exception as gemini_error:
                                 logger.error(f"❌ Gemini fallback also failed: {gemini_error}")
                                 # Re-raise the original OpenAI error since both failed
@@ -77,7 +81,7 @@ class BlogGenerationService:
                 if project_api_keys and project_api_keys.get("gemini"):
                     logger.info(f"✅ Using project-specific Gemini key")
                     # Use project-specific Gemini key
-                    return await self._generate_with_gemini(project_description, blog_number, project_api_keys["gemini"])
+                    return await self._generate_with_gemini(project_description, blog_number, project_api_keys["gemini"], generate_images, num_images_per_blog)
                 else:
                     logger.error(f"❌ No Gemini API key found in project")
                     raise ValueError("Gemini API key not configured for this project")
@@ -90,7 +94,7 @@ class BlogGenerationService:
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             raise
     
-    async def _generate_with_openai(self, project_description: str, blog_number: int, api_key: str) -> Dict[str, Any]:
+    async def _generate_with_openai(self, project_description: str, blog_number: int, api_key: str, generate_images: bool = False, num_images_per_blog: int = 1) -> Dict[str, Any]:
         """Generate blog content using OpenAI with project-specific API key
         
         NOTE: Creates a FRESH OpenAI client configuration for each blog
@@ -135,6 +139,24 @@ class BlogGenerationService:
             selected_style = writing_styles[blog_number % len(writing_styles)]
             selected_angle = content_angles[blog_number % len(content_angles)]
             
+            # Add image placeholder instructions if images are enabled - OPENAI METHOD
+            image_instructions_openai = ""
+            if generate_images and num_images_per_blog > 0:
+                image_instructions_openai = f"""
+            
+            IMAGE REQUIREMENTS:
+            - Include exactly {num_images_per_blog} image placeholders in your content
+            - Use the format [image:description] where description explains what the image should show
+            - DISTRIBUTE images strategically throughout the content - DO NOT place them together continuously
+            - Place images at the start or end of different topics, concepts, or sections
+            - First image should be a header/featured image relevant to the main topic
+            - Additional images should illustrate key concepts, examples, or data at different content sections
+            - Space images evenly throughout the content to maintain visual flow
+            - Make image descriptions specific and detailed for better AI generation
+            - Example: [image:Modern office workspace with productivity tools and organized desk setup]
+            
+            """
+            
             prompt = f"""
             Create a comprehensive, STANDALONE blog post about: {project_description}
             
@@ -154,11 +176,11 @@ class BlogGenerationService:
             - Use a unique writing style and perspective
             - Avoid any references to being part of a series or collection
             - Emphasize the {selected_style} approach throughout the content
-            - Focus on {selected_angle} as the primary content angle
+            - Focus on {selected_angle} as the primary content angle{image_instructions_openai}
             
             Format the response as:
             TITLE: [Your blog title here]
-            CONTENT: [Your blog content here with proper markdown formatting]
+            CONTENT: [Your blog content here with proper markdown formatting and image placeholders]
             """
             
             logger.info(f"📝 Sending prompt to OpenAI: {prompt[:100]}...")
@@ -206,7 +228,7 @@ class BlogGenerationService:
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             raise
     
-    async def _generate_with_gemini(self, project_description: str, blog_number: int, api_key: str) -> Dict[str, Any]:
+    async def _generate_with_gemini(self, project_description: str, blog_number: int, api_key: str, generate_images: bool = False, num_images_per_blog: int = 1) -> Dict[str, Any]:
         """Generate blog content using Gemini with project-specific API key
         
         NOTE: Creates a FRESH Gemini model instance for each blog (like OpenAI)
@@ -266,6 +288,24 @@ class BlogGenerationService:
             selected_style = writing_styles[blog_number % len(writing_styles)]
             selected_angle = content_angles[blog_number % len(content_angles)]
             
+            # Add image placeholder instructions if images are enabled - GEMINI METHOD
+            image_instructions_gemini = ""
+            if generate_images and num_images_per_blog > 0:
+                image_instructions_gemini = f"""
+            
+            IMAGE REQUIREMENTS:
+            - Include exactly {num_images_per_blog} image placeholders in your content
+            - Use the format [image:description] where description explains what the image should show
+            - DISTRIBUTE images strategically throughout the content - DO NOT place them together continuously
+            - Place images at the start or end of different topics, concepts, or sections
+            - First image should be a header/featured image relevant to the main topic
+            - Additional images should illustrate key concepts, examples, or data at different content sections
+            - Space images evenly throughout the content to maintain visual flow
+            - Make image descriptions specific and detailed for better AI generation
+            - Example: [image:Modern office workspace with productivity tools and organized desk setup]
+            
+            """
+            
             prompt = f"""
             Create a comprehensive, STANDALONE blog post about: {project_description}
             
@@ -286,13 +326,13 @@ class BlogGenerationService:
             - Make this blog completely self-contained and independent
             - Use a unique writing style and perspective
             - Avoid any references to being part of a series or collection
-            - Emphasize the {selected_style} approach throughout the content
-            - Focus on {selected_angle} as the primary content angle
+            - Emphasize the {selected_angle} approach throughout the content
+            - Focus on {selected_angle} as the primary content angle{image_instructions_gemini}
             
             Format the response exactly as follows:
             TITLE: [Your blog title here]
             
-            [Your blog content here with proper formatting]
+            [Your blog content here with proper formatting and image placeholders]
             """
             
             logger.info(f"📝 Sending prompt to Gemini: {prompt[:100]}...")
@@ -432,7 +472,9 @@ class BlogGenerationService:
         num_blogs: int,
         ai_model: str = "openai",
         project_api_keys: dict = None,
-        max_concurrent_blogs: int = 5
+        max_concurrent_blogs: int = 5,
+        generate_images: bool = False,
+        num_images_per_blog: int = 1
     ) -> List[Dict[str, Any]]:
         """Generate multiple blogs for a project with automatic multi-threading for multiple blogs"""
         # Automatically enable multi-threading if generating more than 1 blog
@@ -442,12 +484,12 @@ class BlogGenerationService:
             logger.info(f"🚀 Starting multi-threaded blog generation for {num_blogs} blogs")
             return await self._generate_blogs_multithreaded(
                 project_id, project_description, num_blogs, ai_model, 
-                project_api_keys, max_concurrent_blogs
+                project_api_keys, max_concurrent_blogs, generate_images, num_images_per_blog
             )
         else:
             logger.info(f"🚀 Starting sequential blog generation for {num_blogs} blog")
             return await self._generate_blogs_sequential(
-                project_id, project_description, num_blogs, ai_model, project_api_keys
+                project_id, project_description, num_blogs, ai_model, project_api_keys, generate_images, num_images_per_blog
             )
 
     async def _generate_blogs_multithreaded(
@@ -457,7 +499,9 @@ class BlogGenerationService:
         num_blogs: int,
         ai_model: str,
         project_api_keys: dict,
-        max_concurrent_blogs: int
+        max_concurrent_blogs: int,
+        generate_images: bool,
+        num_images_per_blog: int
     ) -> List[Dict[str, Any]]:
         """Generate multiple blogs concurrently using asyncio.gather with semaphore for rate limiting"""
         generated_blogs = []
@@ -487,7 +531,9 @@ class BlogGenerationService:
                         project_description, 
                         blog_number, 
                         ai_model,
-                        project_api_keys
+                        project_api_keys,
+                        generate_images,
+                        num_images_per_blog
                     )
                     
                     # IMMEDIATELY save blog to database
@@ -666,7 +712,9 @@ class BlogGenerationService:
         project_description: str,
         num_blogs: int,
         ai_model: str,
-        project_api_keys: dict
+        project_api_keys: dict,
+        generate_images: bool,
+        num_images_per_blog: int
     ) -> List[Dict[str, Any]]:
         """Generate multiple blogs for a project sequentially"""
         generated_blogs = []
@@ -686,7 +734,9 @@ class BlogGenerationService:
                         project_description, 
                         blog_number, 
                         ai_model,
-                        project_api_keys
+                        project_api_keys,
+                        generate_images,
+                        num_images_per_blog
                     )
                     
                     logger.info(f"✅ Blog content generated: {blog_data['title']}")
@@ -1389,6 +1439,163 @@ class BlogGenerationService:
             score += 20
         
         return min(100, score)
+    
+    async def process_blog_with_images(
+        self,
+        blog_id: str,
+        project_id: str,
+        content: str,
+        title: str,
+        fal_api_key: str,
+        s3_bucket_name: str = "images"
+    ) -> Dict[str, Any]:
+        """
+        Process a blog with image placeholders: store placeholders and generate images
+        
+        Args:
+            blog_id: Blog ID
+            project_id: Project ID
+            content: Blog content with image placeholders
+            title: Blog title
+            fal_api_key: Fal AI API key
+            s3_bucket_name: S3 bucket name for storing images
+            
+        Returns:
+            Dict with processing results
+        """
+        try:
+            logger.info(f"Processing blog {blog_id} with image placeholders")
+            
+            # Step 1: Store image placeholders in database
+            placeholder_result = await self.image_processor.store_image_placeholders(
+                blog_id=blog_id,
+                project_id=project_id,
+                content=content,
+                title=title
+            )
+            
+            if not placeholder_result["success"]:
+                logger.error(f"Failed to store image placeholders: {placeholder_result.get('error')}")
+                return placeholder_result
+            
+            if placeholder_result["placeholders_stored"] == 0:
+                logger.info("No image placeholders found, blog processing complete")
+                return {
+                    "success": True,
+                    "message": "No image placeholders found",
+                    "images_processed": 0,
+                    "content_updated": False
+                }
+            
+            # Step 2: Process stored placeholders (generate images and store in S3)
+            processing_result = await self.image_processor.process_stored_placeholders(
+                blog_id=blog_id,
+                fal_api_key=fal_api_key,
+                s3_bucket_name=s3_bucket_name
+            )
+            
+            if not processing_result["success"]:
+                logger.error(f"Failed to process image placeholders: {processing_result.get('error')}")
+                return processing_result
+            
+            # Step 3: Update blog content with S3 image URLs
+            if processing_result["images_processed"] > 0:
+                updated_content = await self._update_blog_content_with_s3_images(
+                    blog_id=blog_id,
+                    content=content
+                )
+                
+                if updated_content:
+                    logger.info(f"✅ Blog content updated with S3 image URLs")
+                    return {
+                        "success": True,
+                        "message": f"Processed {processing_result['images_processed']} images successfully",
+                        "images_processed": processing_result["images_processed"],
+                        "content_updated": True,
+                        "updated_content": updated_content
+                    }
+                else:
+                    logger.warning("Failed to update blog content with S3 images")
+                    return {
+                        "success": True,
+                        "message": f"Generated {processing_result['images_processed']} images but failed to update content",
+                        "images_processed": processing_result["images_processed"],
+                        "content_updated": False
+                    }
+            else:
+                logger.warning("No images were processed successfully")
+                return {
+                    "success": False,
+                    "error": "No images were processed successfully",
+                    "images_processed": 0,
+                    "content_updated": False
+                }
+                
+        except Exception as e:
+            logger.error(f"Error processing blog with images: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "images_processed": 0,
+                "content_updated": False
+            }
+    
+    async def _update_blog_content_with_s3_images(
+        self,
+        blog_id: str,
+        content: str
+    ) -> str:
+        """
+        Update blog content to replace image placeholders with S3 URLs
+        
+        Args:
+            blog_id: Blog ID
+            content: Original blog content
+            
+        Returns:
+            Updated content with S3 image URLs
+        """
+        try:
+            # Get processed images from database
+            response = supabase_client.table("images").select("image_number, s3_url, prompt, alt_text").eq("blog_id", blog_id).eq("status", "generated").order("image_number").execute()
+            
+            if not response.data:
+                logger.warning("No processed images found for blog")
+                return content
+            
+            # Replace placeholders with S3 URLs
+            updated_content = content
+            for image_data in response.data:
+                placeholder = f"[image:{image_data['prompt']}]"
+                
+                # Create image HTML with S3 URL
+                image_html = f'''
+                <div class="blog-image image-{image_data['image_number']}">
+                    <img src="{image_data['s3_url']}" 
+                         alt="{image_data['alt_text']}" 
+                         class="img-fluid" 
+                         style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"
+                         loading="lazy">
+                    <div class="image-caption" style="text-align: center; margin-top: 8px; font-style: italic; color: #666; font-size: 0.9em;">
+                        {image_data['prompt']}
+                    </div>
+                </div>
+                '''
+                
+                updated_content = updated_content.replace(placeholder, image_html.strip())
+                logger.info(f"Replaced placeholder {image_data['image_number']} with S3 URL")
+            
+            # Update blog content in database
+            supabase_client.table("blogs").update({
+                "content": updated_content,
+                "updated_at": datetime.now().isoformat()
+            }).eq("id", blog_id).execute()
+            
+            return updated_content
+            
+        except Exception as e:
+            logger.error(f"Error updating blog content with S3 images: {e}")
+            return content
 
 # Create service instance
 blog_generation_service = BlogGenerationService()
