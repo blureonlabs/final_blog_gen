@@ -217,6 +217,10 @@ def publish_post_to_wordpress(wp_account: Dict, post_data: Dict) -> Dict:
         # Prepare authentication
         auth = (username, auth_password)
         
+        # WordPress REST API endpoint - try standard endpoint first, then fallback
+        standard_api_url = f"{site_url.rstrip('/')}/wp-json/wp/v2/posts"
+        fallback_api_url = f"{site_url.rstrip('/')}/index.php?rest_route=/wp/v2/posts"
+        
         # Test WordPress API connectivity first
         test_result = test_wordpress_api_connectivity(wp_account, auth)
         if not test_result["success"]:
@@ -227,10 +231,6 @@ def publish_post_to_wordpress(wp_account: Dict, post_data: Dict) -> Dict:
             # Use the working endpoint for publishing
             if test_result['endpoint'] == 'fallback':
                 api_url = fallback_api_url
-        
-        # WordPress REST API endpoint - try standard endpoint first, then fallback
-        standard_api_url = f"{site_url.rstrip('/')}/wp-json/wp/v2/posts"
-        fallback_api_url = f"{site_url.rstrip('/')}/index.php?rest_route=/wp/v2/posts"
         
         # Try standard endpoint first
         api_url = standard_api_url

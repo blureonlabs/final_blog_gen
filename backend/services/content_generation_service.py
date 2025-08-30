@@ -8,6 +8,7 @@ from core.ai_client import AIClient
 from core.supabase_client import supabase_client
 from models.blog import BlogCreate, BlogResponse
 from models.project import ProjectResponse
+from lib.text_cleaner import TextCleaner
 
 logger = logging.getLogger(__name__)
 
@@ -79,10 +80,13 @@ class ContentGenerationService:
             blogs = []
             
             for title in titles:
+                # Clean the title using TextCleaner
+                cleaned_title = TextCleaner.clean_title(title)
+                
                 blog_data = {
                     "project_id": str(project.id),
                     "user_id": str(project.user_id),
-                    "title": title,
+                    "title": cleaned_title,
                     "status": "draft",
                     "generation_metadata": {
                         "ai_model": project.draft_creation_model or "openai",

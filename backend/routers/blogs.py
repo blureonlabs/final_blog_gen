@@ -19,6 +19,7 @@ from core.supabase_client import supabase_client, verify_user_exists
 from core.auth import get_current_user
 from tasks.content_generation import generate_blogs_task, retry_failed_blog
 from tasks.wordpress_publishing import publish_to_wordpress_task
+from lib.text_cleaner import TextCleaner
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -62,16 +63,25 @@ async def generate_blogs(
             print(f"🔍 Starting to create {request.num_blogs} test blogs...")
             test_blogs = []
             for i in range(request.num_blogs):
+                # Clean the test blog data using TextCleaner
+                raw_title = f"Test Blog {i+1}: {request.prompt}"
+                raw_content = f"This is test content for blog {i+1}. The prompt was: {request.prompt}"
+                raw_prompt = request.prompt
+                
+                cleaned_title = TextCleaner.clean_title(raw_title)
+                cleaned_content = TextCleaner.clean_blog_content(raw_content)
+                cleaned_prompt = TextCleaner.clean_prompt(raw_prompt)
+                
                 blog_data = {
                     "id": str(uuid4()),
                     "project_id": str(request.project_id),
                     "user_id": None,  # Set to NULL to bypass foreign key constraint
-                    "title": f"Test Blog {i+1}: {request.prompt}",
-                    "content": f"This is test content for blog {i+1}. The prompt was: {request.prompt}",
+                    "title": cleaned_title,
+                    "content": cleaned_content,
                     "status": "ready" if i < 3 else "generating" if i < 7 else "draft",  # Use valid statuses
                     "word_count": 500 + (i * 100),
                     "ai_model": request.ai_model,
-                    "prompt": request.prompt,
+                    "prompt": cleaned_prompt,
                     "created_at": datetime.utcnow().isoformat(),
                     "updated_at": datetime.utcnow().isoformat()
                 }

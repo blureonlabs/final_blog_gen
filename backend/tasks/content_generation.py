@@ -9,6 +9,7 @@ import threading
 from core.ai_client import ai_client
 from core.supabase_client import supabase_client
 from models.blog import BlogStatus
+from lib.text_cleaner import TextCleaner
 
 logger = logging.getLogger(__name__)
 
@@ -473,13 +474,18 @@ async def _store_blog(project_id: str, blog_data: Dict[str, Any], supabase) -> s
     Store a generated blog in the database
     """
     try:
+        # Clean the blog content, title, and prompt using TextCleaner
+        cleaned_title = TextCleaner.clean_title(blog_data.get("title", ""))
+        cleaned_content = TextCleaner.clean_blog_content(blog_data.get("content", ""))
+        cleaned_prompt = TextCleaner.clean_prompt(blog_data.get("prompt", ""))
+        
         # Create blog record
         blog_record = {
             "id": str(uuid4()),
             "project_id": project_id,
-            "title": blog_data.get("title", ""),
-            "content": blog_data.get("content", ""),
-            "prompt": blog_data.get("prompt", ""),
+            "title": cleaned_title,
+            "content": cleaned_content,
+            "prompt": cleaned_prompt,
             "ai_model": blog_data.get("model_provider", "unknown"),
             "ai_model_version": blog_data.get("model", ""),
             "status": BlogStatus.DRAFT,

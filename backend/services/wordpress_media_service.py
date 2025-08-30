@@ -73,14 +73,6 @@ class WordPressMediaService:
                 "Content-Disposition": f'attachment; filename="{filename}"'
             }
             
-            # Prepare form data for upload
-            data = aiohttp.FormData()
-            data.add_field('file', image_data, filename=filename, content_type='image/jpeg')
-            data.add_field('alt_text', alt_text)
-            data.add_field('title', filename.replace('.jpg', '').replace('_', ' '))
-            
-            logger.info(f"📤 Uploading to WordPress: {upload_url}")
-            
             # Upload to WordPress using application password authentication
             # aiohttp expects BasicAuth object for authentication
             from aiohttp import BasicAuth
@@ -88,7 +80,14 @@ class WordPressMediaService:
             
             # Try modern endpoint first
             logger.info(f"📤 Trying modern WordPress endpoint: {upload_url}")
-            async with self.session.post(upload_url, data=data, headers=headers, auth=auth) as response:
+            
+            # Create form data for modern endpoint
+            modern_data = aiohttp.FormData()
+            modern_data.add_field('file', image_data, filename=filename, content_type='image/jpeg')
+            modern_data.add_field('alt_text', alt_text)
+            modern_data.add_field('title', filename.replace('.jpg', '').replace('_', ' '))
+            
+            async with self.session.post(upload_url, data=modern_data, headers=headers, auth=auth) as response:
                 if response.status == 201:
                     # Success - WordPress returns the media object
                     media_data = await response.json()
@@ -105,7 +104,14 @@ class WordPressMediaService:
                 elif response.status == 404:
                     # Modern endpoint failed, try legacy endpoint
                     logger.info(f"⚠️ Modern endpoint failed (404), trying legacy endpoint: {legacy_url}")
-                    async with self.session.post(legacy_url, data=data, headers=headers, auth=auth) as legacy_response:
+                    
+                    # Create new form data for legacy endpoint
+                    legacy_data = aiohttp.FormData()
+                    legacy_data.add_field('file', image_data, filename=filename, content_type='image/jpeg')
+                    legacy_data.add_field('alt_text', alt_text)
+                    legacy_data.add_field('title', filename.replace('.jpg', '').replace('_', ' '))
+                    
+                    async with self.session.post(legacy_url, data=legacy_data, headers=headers, auth=auth) as legacy_response:
                         if legacy_response.status == 201:
                             # Success with legacy endpoint
                             media_data = await legacy_response.json()

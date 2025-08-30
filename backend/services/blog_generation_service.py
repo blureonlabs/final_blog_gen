@@ -13,6 +13,7 @@ from models.blog import BlogCreate, BlogStatus
 from services.s3_storage_service import S3StorageService
 from services.image_placeholder_processor import ImagePlaceholderProcessor
 from services.blog_image_processor import BlogImageProcessor
+from lib.text_cleaner import TextCleaner
 
 logger = logging.getLogger(__name__)
 
@@ -946,13 +947,18 @@ class BlogGenerationService:
         """Store blog content and metadata"""
         try:
             logger.info("🔍 Starting blog storage process")
-            logger.info(f"🔍 Blog title: {blog_create.title}")
+            # Clean the blog content, title, and prompt using TextCleaner
+            cleaned_content = TextCleaner.clean_blog_content(content)
+            cleaned_title = TextCleaner.clean_title(blog_create.title)
+            cleaned_prompt = TextCleaner.clean_prompt(blog_create.prompt)
+            
+            logger.info(f"🔍 Blog title: {cleaned_title}")
             logger.info(f"🔍 Project ID: {blog_create.project_id}")
-            logger.info(f"🔍 Content length: {len(content)} characters")
+            logger.info(f"🔍 Content length: {len(cleaned_content)} characters (cleaned)")
             
             # Generate storage path
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            content_hash = hashlib.md5(content.encode()).hexdigest()[:8]
+            content_hash = hashlib.md5(cleaned_content.encode()).hexdigest()[:8]
             storage_path = f"blogs/{blog_create.project_id}/{timestamp}_{content_hash}.json"
             
             logger.info(f"📁 Generated storage path: {storage_path}")
@@ -963,7 +969,7 @@ class BlogGenerationService:
                 # Store content in S3
                 s3_key = storage_path  # Use storage_path directly, no need to prefix with bucket name
                 self.s3_storage.upload_content(
-                    content=content,
+                    content=cleaned_content,
                     key=s3_key,
                     content_type="application/json"
                 )
@@ -972,15 +978,15 @@ class BlogGenerationService:
                 # Store blog metadata in database
                 blog_metadata = {
                     "project_id": str(blog_create.project_id),
-                    "title": blog_create.title,
+                    "title": cleaned_title,
                     "status": blog_create.status,
                     "word_count": blog_create.word_count,
-                    "prompt": blog_create.prompt,
+                    "prompt": cleaned_prompt,
                     "ai_model": blog_create.ai_model,
                     "storage_path": storage_path,
                     "storage_bucket": "blog-content",
                     "s3_content_key": s3_key,
-                    "content_size_bytes": len(content.encode()),
+                    "content_size_bytes": len(cleaned_content.encode()),
                     "created_at": datetime.now().isoformat(),
                     "updated_at": datetime.now().isoformat()
                 }
@@ -1005,11 +1011,11 @@ class BlogGenerationService:
                 
                 blog_metadata = {
                     "project_id": str(blog_create.project_id),
-                    "title": blog_create.title,
-                    "content": content,  # Store content directly in database
+                    "title": cleaned_title,
+                    "content": cleaned_content,  # Store cleaned content directly in database
                     "status": blog_create.status,
                     "word_count": blog_create.word_count,
-                    "prompt": blog_create.prompt,
+                    "prompt": cleaned_prompt,
                     "ai_model": blog_create.ai_model,
                     "created_at": datetime.now().isoformat(),
                     "updated_at": datetime.now().isoformat()
