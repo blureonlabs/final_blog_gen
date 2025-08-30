@@ -403,3 +403,89 @@ async def get_blog_image_status(
     except Exception as e:
         logger.error(f"Error getting blog image status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/blog/{blog_id}/trigger-wordpress-upload")
+async def trigger_wordpress_upload(
+    blog_id: str,
+    current_user: Dict = Depends(get_current_user)
+):
+    """Manually trigger WordPress media upload for an existing blog"""
+    try:
+        # Validate blog ownership
+        blog_response = supabase_client.table("blogs").select("id, project_id, title").eq("id", blog_id).execute()
+        if not blog_response.data:
+            raise HTTPException(status_code=404, detail="Blog not found")
+        
+        blog_data = blog_response.data[0]
+        project_response = supabase_client.table("projects").select("user_id, wordpress_account_id").eq("id", blog_data["project_id"]).execute()
+        if not project_response.data:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        project_data = project_response.data[0]
+        if project_data["user_id"] != current_user["id"]:
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        # Check if WordPress account is configured
+        if not project_data.get("wordpress_account_id"):
+            raise HTTPException(status_code=400, detail="No WordPress account configured for this project")
+        
+        # Import the blog generation service to trigger WordPress upload
+        from services.blog_generation_service import blog_generation_service
+        
+        # Trigger WordPress upload
+        result = await blog_generation_service.trigger_wordpress_upload_for_existing_blog(blog_id)
+        
+        if result["success"]:
+            return {
+                "success": True,
+                "message": "WordPress upload triggered successfully",
+                "blog_id": blog_id
+            }
+        else:
+            raise HTTPException(status_code=500, detail=f"Failed to trigger WordPress upload: {result.get('error')}")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error triggering WordPress upload: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/blog/{blog_id}/wordpress-status")
+async def get_wordpress_upload_status(
+    blog_id: str,
+    current_user: Dict = Depends(get_current_user)
+):
+    """Get the WordPress upload status for a blog"""
+    try:
+        # Validate blog ownership
+        blog_response = supabase_client.table("blogs").select("id, project_id, title").eq("id", blog_id).execute()
+        if not blog_response.data:
+            raise HTTPException(status_code=404, detail="Blog not found")
+        
+        blog_data = blog_response.data[0]
+        project_response = supabase_client.table("projects").select("user_id").eq("id", blog_data["project_id"]).execute()
+        if not project_response.data:
+            raise HTTPException(status_code=500, detail="Project not found")
+        
+        project_data = project_response.data[0]
+        if project_data["user_id"] != current_user["id"]:
+            raise HTTPException(status_code=400, detail="Access denied")
+        
+        # Import the blog generation service to get WordPress status
+        from services.blog_generation_service import blog_generation_service
+        
+        # Get WordPress upload status
+        status = blog_generation_service.get_wordpress_upload_status(blog_id)
+        
+        return {
+            "success": True,
+            "blog_id": blog_id,
+            "blog_title": blog_data["title"],
+            "wordpress_status": status
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting WordPress upload status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

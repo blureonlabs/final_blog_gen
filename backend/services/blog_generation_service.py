@@ -1706,11 +1706,212 @@ class BlogGenerationService:
             
             if result["success"]:
                 logger.info(f"✅ Background image processing completed for blog {blog_id}: {result['total_images_generated']} images generated")
+                
+                # Step 3: Automatically trigger WordPress media upload if WordPress account is configured
+                await self._trigger_wordpress_media_upload(blog_id, project_id)
+                
             else:
                 logger.error(f"❌ Background image processing failed for blog {blog_id}: {result.get('error', 'Unknown error')}")
                 
         except Exception as e:
             logger.error(f"❌ Background image processing error for blog {blog_id}: {e}")
+    
+    async def _trigger_wordpress_media_upload(self, blog_id: str, project_id: str):
+        """Automatically trigger WordPress media upload for blog images"""
+        try:
+            logger.info(f"🌐 Checking if WordPress media upload should be triggered for blog {blog_id}")
+            
+            # Get project details to check if WordPress account is configured
+            project_response = supabase_client.table("projects").select("wordpress_account_id").eq("id", project_id).execute()
+            
+            if not project_response.data:
+                logger.info(f"ℹ️ Project {project_id} not found, skipping WordPress upload")
+                return
+            
+            project = project_response.data[0]
+            wordpress_account_id = project.get("wordpress_account_id")
+            
+            if not wordpress_account_id:
+                logger.info(f"ℹ️ No WordPress account configured for project {project_id}, skipping WordPress upload")
+                return
+            
+            # Check if there are images ready for WordPress upload
+            images_response = supabase_client.table("images").select(
+                "id, status, s3_url, wordpress_media_url"
+            ).eq("blog_id", blog_id).eq("status", "generated").not_.is_("s3_url", "null").is_("wordpress_media_url", "null").execute()
+            
+            if not images_response.data:
+                logger.info(f"ℹ️ No images ready for WordPress upload for blog {blog_id}")
+                return
+            
+            ready_images = images_response.data
+            logger.info(f"📸 Found {len(ready_images)} images ready for WordPress upload, triggering automatic upload")
+            
+            # Import and trigger the WordPress media upload task
+            try:
+                # Try Celery first (if available)
+                try:
+                    from tasks.wordpress_media_upload import upload_images_to_wordpress_task
+                    
+                    # Start the WordPress upload task in background
+                    task = upload_images_to_wordpress_task.delay(blog_id, wordpress_account_id)
+                    
+                    logger.info(f"✅ WordPress media upload task started for blog {blog_id}: {task.id}")
+                    logger.info(f"   📊 {len(ready_images)} images will be uploaded to WordPress")
+                    
+                except (ImportError, ConnectionRefusedError, Exception) as e:
+                    logger.warning(f"⚠️ Celery task not available, using direct upload: {e}")
+                    
+                    # Fallback: Direct WordPress upload
+                    await self._upload_images_to_wordpress_directly(blog_id, wordpress_account_id, ready_images)
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to start WordPress media upload task: {e}")
+                
+        except Exception as e:
+            logger.error(f"❌ Error triggering WordPress media upload for blog {blog_id}: {e}")
+    
+    async def _upload_images_to_wordpress_directly(self, blog_id: str, wordpress_account_id: str, images: List[Dict[str, Any]]):
+        """Direct WordPress upload without Celery (fallback method)"""
+        try:
+            logger.info(f"🌐 Starting direct WordPress upload for blog {blog_id} ({len(images)} images)")
+            
+            # Import the WordPress media service
+            try:
+                from services.wordpress_media_service import WordPressMediaService
+                
+                # Get WordPress account details
+                wp_response = supabase_client.table("wordpress_accounts").select("*").eq("id", wordpress_account_id).eq("is_active", True).execute()
+                if not wp_response.data:
+                    logger.error(f"❌ WordPress account {wordpress_account_id} not found or inactive")
+                    return
+                
+                wordpress_account = wp_response.data[0]
+                
+                # Upload images directly
+                async with WordPressMediaService() as wp_service:
+                    upload_result = await wp_service.upload_multiple_images(images, wordpress_account)
+                    
+                    if upload_result["success"]:
+                        # Update database with WordPress media URLs
+                        update_result = self._update_images_with_wordpress_urls(upload_result["results"])
+                        
+                        logger.info(f"✅ Direct WordPress upload completed for blog {blog_id}")
+                        logger.info(f"   📊 {upload_result['successful_count']} successful, {upload_result['failed_count']} failed")
+                        logger.info(f"   💾 Database updated: {update_result['updated_count']} records")
+                    else:
+                        logger.error(f"❌ Direct WordPress upload failed for blog {blog_id}")
+                        
+            except ImportError as e:
+                logger.warning(f"⚠️ WordPress media service not available: {e}")
+            except Exception as e:
+                logger.error(f"❌ Error in direct WordPress upload: {e}")
+                
+        except Exception as e:
+            logger.error(f"❌ Error in direct WordPress upload method: {e}")
+    
+    def _update_images_with_wordpress_urls(self, upload_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Update image records with WordPress media URLs"""
+        try:
+            updated_count = 0
+            failed_count = 0
+            
+            for result in upload_results:
+                if result["success"]:
+                    try:
+                        # Update the image record with WordPress media URL
+                        update_data = {
+                            "wordpress_media_url": result["wordpress_media_url"],
+                            "wordpress_media_id": result["wordpress_media_id"],
+                            "updated_at": datetime.utcnow().isoformat()
+                        }
+                        
+                        supabase_client.table("images").update(update_data).eq("id", result["image_id"]).execute()
+                        updated_count += 1
+                        
+                        logger.info(f"✅ Updated image {result['image_id']} with WordPress media URL")
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Failed to update image {result['image_id']}: {e}")
+                        failed_count += 1
+                else:
+                    logger.warning(f"⚠️ Image {result['image_id']} upload failed, not updating database")
+            
+            logger.info(f"📊 Database update completed: {updated_count} updated, {failed_count} failed")
+            
+            return {
+                "success": failed_count == 0,
+                "updated_count": updated_count,
+                "failed_count": failed_count
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error updating images with WordPress URLs: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    async def trigger_wordpress_upload_for_existing_blog(self, blog_id: str):
+        """Manually trigger WordPress upload for an existing blog that already has generated images"""
+        try:
+            logger.info(f"🌐 Manually triggering WordPress upload for existing blog {blog_id}")
+            
+            # Get blog details to find the project
+            blog_response = supabase_client.table("blogs").select("project_id").eq("id", blog_id).execute()
+            
+            if not blog_response.data:
+                logger.error(f"❌ Blog {blog_id} not found")
+                return {"success": False, "error": "Blog not found"}
+            
+            project_id = blog_response.data[0]["project_id"]
+            
+            # Trigger WordPress upload
+            await self._trigger_wordpress_media_upload(blog_id, project_id)
+            
+            return {"success": True, "message": "WordPress upload triggered successfully"}
+            
+        except Exception as e:
+            logger.error(f"❌ Error manually triggering WordPress upload for blog {blog_id}: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def get_wordpress_upload_status(self, blog_id: str):
+        """Get the WordPress upload status for a blog"""
+        try:
+            # Get all images for the blog
+            response = supabase_client.table("images").select(
+                "id, image_number, status, s3_url, wordpress_media_url, wordpress_media_id, prompt"
+            ).eq("blog_id", blog_id).order("image_number").execute()
+            
+            if not response.data:
+                return {"blog_id": blog_id, "images": [], "total_count": 0}
+            
+            images = response.data
+            
+            # Calculate statistics
+            total_count = len(images)
+            ready_for_wordpress = len([img for img in images if img.get("status") == "generated" and img.get("s3_url") and not img.get("wordpress_media_url")])
+            uploaded_to_wordpress = len([img for img in images if img.get("wordpress_media_url")])
+            
+            return {
+                "blog_id": blog_id,
+                "images": images,
+                "total_count": total_count,
+                "ready_for_wordpress": ready_for_wordpress,
+                "uploaded_to_wordpress": uploaded_to_wordpress,
+                "summary": {
+                    "total_images": total_count,
+                    "generated": len([img for img in images if img.get("status") == "generated"]),
+                    "pending": len([img for img in images if img.get("status") == "pending"]),
+                    "failed": len([img for img in images if img.get("status") == "failed"]),
+                    "wordpress_ready": ready_for_wordpress,
+                    "wordpress_uploaded": uploaded_to_wordpress
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error getting WordPress upload status for blog {blog_id}: {e}")
+            return {"blog_id": blog_id, "error": str(e)}
 
 # Create service instance
 blog_generation_service = BlogGenerationService()

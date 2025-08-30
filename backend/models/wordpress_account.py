@@ -8,7 +8,7 @@ class WordPressAccountBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, description="Account name")
     site_url: HttpUrl = Field(..., description="WordPress site URL")
     username: str = Field(..., min_length=1, max_length=255, description="WordPress username")
-    password: str = Field(..., min_length=1, description="WordPress password or API token")
+    password: str = Field(..., min_length=1, description="WordPress application password (generate from WP user profile)")
     is_active: bool = Field(default=True, description="Whether the account is active")
 
 class WordPressAccountCreate(WordPressAccountBase):

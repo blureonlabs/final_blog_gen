@@ -7,7 +7,7 @@ import uvicorn
 from dotenv import load_dotenv
 import os
 
-from routers import projects, wordpress_accounts, api_keys, blogs, content_generation, image_generation, image_processing, blog_image_processing
+from routers import projects, wordpress_accounts, api_keys, blogs, content_generation, image_generation, image_processing, blog_image_processing, wordpress_media
 from core.config import settings
 from core.supabase_client import supabase_client
 from swagger_config import custom_openapi_schema, API_METADATA
@@ -93,6 +93,10 @@ app = FastAPI(
         {
             "name": "blog-image-processing",
             "description": "Complete workflow for processing blog content, extracting image placeholders, and generating images using Fal AI."
+        },
+        {
+            "name": "wordpress-media",
+            "description": "WordPress media upload functionality for automatically uploading generated images to WordPress sites."
         }
     ],
     lifespan=lifespan
@@ -116,6 +120,7 @@ app.include_router(content_generation.router, prefix="/api", tags=["content-gene
 app.include_router(image_generation.router, prefix="/api/images", tags=["image-generation"])
 app.include_router(image_processing.router, prefix="/api/image-processing", tags=["image-processing"])
 app.include_router(blog_image_processing.router, prefix="/api/blog-images", tags=["blog-image-processing"])
+app.include_router(wordpress_media.router, tags=["wordpress-media"])
 
 @app.get("/", 
     summary="API Status",
@@ -151,7 +156,8 @@ async def root():
             "blogs": "/api/blogs",
             "image_generation": "/api/images",
             "image_processing": "/api/image-processing",
-            "blog_image_processing": "/api/blog-images"
+            "blog_image_processing": "/api/blog-images",
+            "wordpress_media": "/api/wordpress-media"
         }
     }
 
