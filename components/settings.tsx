@@ -261,7 +261,7 @@ export function Settings({ onUpdate }: SettingsProps) {
     return originalAccount?.[field] || ""
   }
 
-  const addApiKey = async (service: "openai" | "gemini" | "serp") => {
+  const addApiKey = async (service: "openai" | "gemini" | "serp" | "fal") => {
     if (!userData || !newApiKeyName || !newApiKeyValue) return
     
     try {
@@ -350,6 +350,7 @@ export function Settings({ onUpdate }: SettingsProps) {
     openai: { name: "OpenAI", placeholder: "sk-..." },
     gemini: { name: "Google Gemini", placeholder: "AIza..." },
     serp: { name: "SERP API", placeholder: "your-serp-api-key..." },
+    fal: { name: "Fal AI", placeholder: "fal-..." },
   }
 
   const addWordPressAccount = async () => {
@@ -597,7 +598,7 @@ export function Settings({ onUpdate }: SettingsProps) {
                           />
                         </div>
                         <Button
-                          onClick={() => addApiKey(service as "openai" | "gemini" | "serp")}
+                          onClick={() => addApiKey(service as "openai" | "gemini" | "serp" | "fal")}
                           disabled={!newApiKeyName || !newApiKeyValue}
                           className="w-full bg-indigo-600 hover:bg-indigo-700 text-white disabled:bg-gray-400 disabled:cursor-not-allowed"
                         >
