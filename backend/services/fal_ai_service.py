@@ -66,7 +66,7 @@ class FalAIService:
                 "image_size": image_size,
                 "num_inference_steps": quality_steps.get(quality, 28),
                 "guidance_scale": 3.5,  # Using default from docs
-                "sync_mode": True,  # Wait for completion
+                # Remove sync_mode to get URLs instead of base64 data
                 "num_images": 1,
                 "enable_safety_checker": True,
                 "output_format": "jpeg",
@@ -77,47 +77,53 @@ class FalAIService:
             logger.info(f"📝 Prompt: {prompt[:100]}...")
             logger.info(f"🔧 Arguments: {arguments}")
             
-            # Use the official fal-client to submit the request
-            result = fal_client.submit(
+            # Use the working fal-client.subscribe approach (gives URLs instead of base64)
+            result = fal_client.subscribe(
                 "fal-ai/flux/dev",
                 arguments=arguments
             )
             
-            logger.info(f"📤 Request submitted to Fal AI with ID: {result.request_id}")
+            logger.info(f"📤 Request submitted to Fal AI using subscribe method")
             
-            # Wait for the result (since sync_mode=True)
-            final_result = fal_client.result("fal-ai/flux/dev", result.request_id)
+            # Get the result directly (subscribe gives us the final result)
+            final_result = result
+            
+            # The result from subscribe is already the final result
+            final_result = result
             
             if final_result and "images" in final_result and len(final_result["images"]) > 0:
-                image_url = final_result["images"][0]["url"]
+                image_data = final_result["images"][0]
                 
-                logger.info(f"✅ Image generated successfully by Fal AI!")
-                logger.info(f"🖼️ Image URL: {image_url[:100]}...")
-                
-                return {
-                    "success": True,
-                    "image_url": image_url,
-                    "metadata": {
-                        "prompt": prompt,
-                        "style": style,
-                        "aspect_ratio": aspect_ratio,
-                        "quality": quality,
-                        "inference_steps": quality_steps.get(quality, 28),
-                        "generated_at": datetime.utcnow().isoformat(),
-                        "fal_request_id": result.request_id,
-                        "fal_response": final_result
+                # Now we should always get URLs (no more base64 data)
+                if "url" in image_data and image_data["url"]:
+                    image_url = image_data["url"]
+                    logger.info(f"✅ Image generated successfully by Fal AI!")
+                    logger.info(f"🖼️ Image URL: {image_url[:100]}...")
+                    
+                    return {
+                        "success": True,
+                        "image_url": image_url,
+                        "image_data": None,
+                        "metadata": {
+                            "prompt": prompt,
+                            "style": style,
+                            "aspect_ratio": aspect_ratio,
+                            "quality": quality,
+                            "inference_steps": quality_steps.get(quality, 28),
+                            "generated_at": datetime.utcnow().isoformat(),
+                            "fal_response": final_result
+                        }
                     }
-                }
-            else:
-                logger.error("❌ No images returned from Fal AI")
-                return {
-                    "success": False,
-                    "error": "No images returned from Fal AI",
-                    "metadata": {
-                        "prompt": prompt,
-                        "fal_response": final_result
+                else:
+                    logger.error("❌ No valid image URL returned from Fal AI")
+                    return {
+                        "success": False,
+                        "error": "No valid image URL returned from Fal AI",
+                        "metadata": {
+                            "prompt": prompt,
+                            "fal_response": final_result
+                        }
                     }
-                }
                         
         except Exception as e:
             logger.error(f"❌ Error generating image with Fal AI: {e}")
@@ -173,15 +179,32 @@ class FalAIService:
                 )
                 
                 if result["success"]:
-                    images.append({
-                        "url": result["image_url"],
-                        "prompt": varied_prompt,
-                        "style": style,
-                        "aspect_ratio": aspect_ratio,
-                        "quality": quality,
-                        "generated_at": datetime.utcnow().isoformat(),
-                        "variation": i + 1
-                    })
+                    # Handle both URL and base64 data
+                    if result.get("image_url"):
+                        image_data = {
+                            "url": result["image_url"],
+                            "prompt": varied_prompt,
+                            "style": style,
+                            "aspect_ratio": aspect_ratio,
+                            "quality": quality,
+                            "generated_at": datetime.utcnow().isoformat(),
+                            "variation": i + 1
+                        }
+                    elif result.get("image_data"):
+                        image_data = {
+                            "image_data": result["image_data"],
+                            "prompt": varied_prompt,
+                            "style": style,
+                            "aspect_ratio": aspect_ratio,
+                            "quality": quality,
+                            "generated_at": datetime.utcnow().isoformat(),
+                            "variation": i + 1
+                        }
+                    else:
+                        logger.warning(f"No image data returned for image {i+1}")
+                        continue
+                    
+                    images.append(image_data)
                     successful_count += 1
                 else:
                     logger.warning(f"Failed to generate image {i+1}: {result.get('error', 'Unknown error')}")
@@ -238,24 +261,22 @@ class FalAIService:
     async def validate_api_key(self) -> bool:
         """Validate if the API key is valid by making a test request"""
         try:
-            # Make a simple test request
-            test_payload = {
+            # Make a simple test request using fal-client
+            arguments = {
                 "prompt": "test image, simple",
-                "image_dimensions": "512x512",
+                "image_size": "512x512",
                 "num_inference_steps": 10,
-                "guidance_scale": 7.5,
-                "scheduler": "euler_a",
-                "sync_mode": True
+                "guidance_scale": 3.5,
+                "num_images": 1,
+                "enable_safety_checker": True,
+                "output_format": "jpeg",
+                "acceleration": "none"
             }
             
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    self.base_url,
-                    headers=self.headers,
-                    json=test_payload,
-                    timeout=aiohttp.ClientTimeout(total=30)
-                ) as response:
-                    return response.status == 200
+            result = fal_client.subscribe("fal-ai/flux/dev", arguments=arguments)
+            final_result = result
+            
+            return final_result and "images" in final_result and len(final_result["images"]) > 0
                     
         except Exception as e:
             logger.error(f"API key validation failed: {e}")

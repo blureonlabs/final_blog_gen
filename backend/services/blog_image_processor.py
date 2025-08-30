@@ -2,6 +2,7 @@ import os
 import logging
 import re
 import asyncio
+import aiohttp
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from uuid import uuid4
@@ -227,123 +228,164 @@ class BlogImageProcessor:
                     if result["success"] and result["images"]:
                         # Get the generated image
                         generated_image = result["images"][0]
-                        fal_image_url = generated_image["url"]
                         
-                        try:
-                            # Download image from Fal AI and upload to Supabase Storage
-                            logger.info(f"📥 Downloading image from Fal AI and uploading to Supabase Storage...")
+                        # Check if we got a URL or base64 data
+                        if "url" in generated_image and generated_image["url"]:
+                            # We have a URL, download and upload to Supabase Storage
+                            fal_image_url = generated_image["url"]
                             
-                            # Download image from Fal AI
-                            import aiohttp
-                            async with aiohttp.ClientSession() as session:
-                                async with session.get(fal_image_url) as response:
-                                    if response.status == 200:
-                                        image_data = await response.read()
-                                        logger.info(f"✅ Downloaded {len(image_data)} bytes from Fal AI")
-                                        
-                                        # Upload to Supabase Storage bucket "images"
-                                        try:
-                                            # Generate storage path: blogid_1_image, blogid_2_image, etc.
-                                            storage_path = f"{blog_id}_{image_record['image_number']}_image.jpg"
+                            # Debug: Check what we're getting from Fal AI
+                            logger.info(f"🔍 Fal AI response - generated_image: {generated_image}")
+                            logger.info(f"🔍 Fal AI response - fal_image_url type: {type(fal_image_url)}")
+                            logger.info(f"🔍 Fal AI response - fal_image_url length: {len(str(fal_image_url))}")
+                            logger.info(f"🔍 Fal AI response - fal_image_url starts with 'data:': {str(fal_image_url).startswith('data:')}")
+                            
+                            # Now we should always get actual URLs from Fal AI
+                            if str(fal_image_url).startswith('data:'):
+                                logger.warning(f"⚠️ Unexpected base64 data received from Fal AI for image {image_record['image_number']}")
+                                continue
+                            
+                            # Download image from Fal AI and upload to Supabase Storage (now we should always get real HTTP URLs)
+                            try:
+                                logger.info(f"📥 Downloading image from Fal AI and uploading to Supabase Storage...")
+                                async with aiohttp.ClientSession() as session:
+                                    async with session.get(fal_image_url) as response:
+                                        if response.status == 200:
+                                            image_data = await response.read()
+                                            logger.info(f"✅ Downloaded {len(image_data)} bytes from Fal AI")
                                             
-                                            # Upload to Supabase Storage
-                                            storage_response = supabase_client.storage.from_("images").upload(
-                                                path=storage_path,
-                                                file=image_data,
-                                                file_options={"content-type": "image/jpeg"}
-                                            )
-                                            
-                                            if storage_response:
-                                                # Get the public URL from Supabase Storage
-                                                storage_url = supabase_client.storage.from_("images").get_public_url(storage_path)
-                                                
-                                                logger.info(f"✅ Image uploaded to Supabase Storage: {storage_path}")
-                                                logger.info(f"🖼️ Storage URL: {storage_url}")
-                                                
-                                                # Update image record with Supabase Storage URL
-                                                update_data = {
-                                                    "s3_url": storage_url,  # Store the Supabase Storage URL
-                                                    "status": "generated",
-                                                    "updated_at": datetime.utcnow().isoformat()
-                                                }
-                                                
-                                                supabase_client.table("images").update(update_data).eq("id", image_record["id"]).execute()
-                                                
-                                                generated_images.append({
-                                                    "id": image_record["id"],
-                                                    "image_number": image_record["image_number"],
-                                                    "url": storage_url,  # Use Supabase Storage URL
-                                                    "prompt": image_record["prompt"]
-                                                })
-                                                
-                                                logger.info(f"✅ Successfully generated and uploaded image {image_record['image_number']} for blog {blog_id} to Supabase Storage")
-                                            else:
-                                                # Failed to upload to Supabase Storage
-                                                error_msg = "Failed to upload image to Supabase Storage"
+                                            # Upload to Supabase Storage bucket "images"
+                                            try:
+                                                storage_path = f"{blog_id}_{image_record['image_number']}_image.jpg"
+                                                storage_response = supabase_client.storage.from_("images").upload(
+                                                    path=storage_path,
+                                                    file=image_data,
+                                                    file_options={"content-type": "image/jpeg"}
+                                                )
+                                                if storage_response:
+                                                    storage_url = supabase_client.storage.from_("images").get_public_url(storage_path)
+                                                    logger.info(f"✅ Image uploaded to Supabase Storage: {storage_path}")
+                                                    logger.info(f"🖼️ Storage URL: {storage_url}")
+                                                    update_data = {
+                                                        "s3_url": storage_url,
+                                                        "status": "generated",
+                                                        "updated_at": datetime.utcnow().isoformat()
+                                                    }
+                                                    supabase_client.table("images").update(update_data).eq("id", image_record["id"]).execute()
+                                                    generated_images.append({
+                                                        "id": image_record["id"],
+                                                        "image_number": image_record["image_number"],
+                                                        "url": storage_url,
+                                                        "prompt": image_record["prompt"]
+                                                    })
+                                                    logger.info(f"✅ Successfully generated and uploaded image {image_record['image_number']} for blog {blog_id} to Supabase Storage")
+                                                else:
+                                                    error_msg = "Failed to upload image to Supabase Storage"
+                                                    supabase_client.table("images").update({
+                                                        "status": "failed",
+                                                        "error_message": error_msg,
+                                                        "updated_at": datetime.utcnow().isoformat()
+                                                    }).eq("id", image_record["id"]).execute()
+                                                    logger.error(f"❌ {error_msg} for image {image_record['image_number']}")
+                                            except Exception as storage_error:
+                                                error_msg = f"Supabase Storage upload failed: {str(storage_error)}"
                                                 supabase_client.table("images").update({
                                                     "status": "failed",
                                                     "error_message": error_msg,
                                                     "updated_at": datetime.utcnow().isoformat()
                                                 }).eq("id", image_record["id"]).execute()
-                                                
-                                                failed_images.append({
-                                                    "id": image_record["id"],
-                                                    "image_number": image_record["image_number"],
-                                                    "error": error_msg
-                                                })
-                                                
-                                                logger.error(f"❌ Failed to upload image {image_record['image_number']} to Supabase Storage for blog {blog_id}")
-                                                
-                                        except Exception as storage_error:
-                                            # Failed to upload to Supabase Storage
-                                            error_msg = f"Supabase Storage upload failed: {str(storage_error)}"
+                                                logger.error(f"❌ {error_msg} for image {image_record['image_number']}")
+                                        else:
+                                            error_msg = f"Failed to download image from Fal AI: {response.status}"
                                             supabase_client.table("images").update({
                                                 "status": "failed",
                                                 "error_message": error_msg,
                                                 "updated_at": datetime.utcnow().isoformat()
                                             }).eq("id", image_record["id"]).execute()
-                                            
-                                            failed_images.append({
-                                                "id": image_record["id"],
-                                                "image_number": image_record["image_number"],
-                                                "error": error_msg
-                                            })
-                                            
-                                            logger.error(f"❌ Failed to upload image {image_record['image_number']} to Supabase Storage for blog {blog_id}: {storage_error}")
-                                            
+                                            logger.error(f"❌ {error_msg} for image {image_record['image_number']}")
+                            except Exception as e:
+                                error_msg = f"Error during image processing: {str(e)}"
+                                supabase_client.table("images").update({
+                                    "status": "failed",
+                                    "error_message": error_msg,
+                                    "updated_at": datetime.utcnow().isoformat()
+                                }).eq("id", image_record["id"]).execute()
+                                logger.error(f"❌ {error_msg} for image {image_record['image_number']}")
+                        
+                        elif "image_data" in generated_image and generated_image["image_data"]:
+                            # We have base64 data, decode and upload directly to Supabase Storage
+                            base64_data = generated_image["image_data"]
+                            logger.info(f"🖼️ Processing base64 image data for image {image_record['image_number']}")
+                            
+                            try:
+                                # Decode base64 data
+                                import base64
+                                if base64_data.startswith('data:image/'):
+                                    # Remove data URL prefix
+                                    base64_data = base64_data.split(',', 1)[1]
+                                
+                                image_data = base64.b64decode(base64_data)
+                                logger.info(f"✅ Decoded {len(image_data)} bytes from base64 data")
+                                
+                                # Upload to Supabase Storage bucket "images"
+                                try:
+                                    storage_path = f"{blog_id}_{image_record['image_number']}_image.jpg"
+                                    storage_response = supabase_client.storage.from_("images").upload(
+                                        path=storage_path,
+                                        file=image_data,
+                                        file_options={"content-type": "image/jpeg"}
+                                    )
+                                    if storage_response:
+                                        storage_url = supabase_client.storage.from_("images").get_public_url(storage_path)
+                                        logger.info(f"✅ Image uploaded to Supabase Storage: {storage_path}")
+                                        logger.info(f"🖼️ Storage URL: {storage_url}")
+                                        update_data = {
+                                            "s3_url": storage_url,
+                                            "status": "generated",
+                                            "updated_at": datetime.utcnow().isoformat()
+                                        }
+                                        supabase_client.table("images").update(update_data).eq("id", image_record["id"]).execute()
+                                        generated_images.append({
+                                            "id": image_record["id"],
+                                            "image_number": image_record["image_number"],
+                                            "url": storage_url,
+                                            "prompt": image_record["prompt"]
+                                        })
+                                        logger.info(f"✅ Successfully generated and uploaded image {image_record['image_number']} for blog {blog_id} to Supabase Storage")
                                     else:
-                                        # Failed to download from Fal AI
-                                        error_msg = f"Failed to download image from Fal AI: {response.status}"
+                                        error_msg = "Failed to upload image to Supabase Storage"
                                         supabase_client.table("images").update({
                                             "status": "failed",
                                             "error_message": error_msg,
                                             "updated_at": datetime.utcnow().isoformat()
                                         }).eq("id", image_record["id"]).execute()
-                                        
-                                        failed_images.append({
-                                            "id": image_record["id"],
-                                            "image_number": image_record["image_number"],
-                                            "error": error_msg
-                                        })
-                                        
-                                        logger.error(f"❌ Failed to download image {image_record['image_number']} from Fal AI for blog {blog_id}")
-                                        
-                        except Exception as e:
-                            # Error during download/upload process
-                            error_msg = f"Error during image processing: {str(e)}"
+                                        logger.error(f"❌ {error_msg} for image {image_record['image_number']}")
+                                except Exception as storage_error:
+                                    error_msg = f"Supabase Storage upload failed: {str(storage_error)}"
+                                    supabase_client.table("images").update({
+                                        "status": "failed",
+                                        "error_message": error_msg,
+                                        "updated_at": datetime.utcnow().isoformat()
+                                    }).eq("id", image_record["id"]).execute()
+                                    logger.error(f"❌ {error_msg} for image {image_record['image_number']}")
+                            except Exception as e:
+                                error_msg = f"Error processing base64 image data: {str(e)}"
+                                supabase_client.table("images").update({
+                                    "status": "failed",
+                                    "error_message": error_msg,
+                                    "updated_at": datetime.utcnow().isoformat()
+                                }).eq("id", image_record["id"]).execute()
+                                logger.error(f"❌ {error_msg} for image {image_record['image_number']}")
+                        
+                        else:
+                            # No valid image data
+                            error_msg = "No valid image data returned from Fal AI"
                             supabase_client.table("images").update({
                                 "status": "failed",
                                 "error_message": error_msg,
                                 "updated_at": datetime.utcnow().isoformat()
                             }).eq("id", image_record["id"]).execute()
-                            
-                            failed_images.append({
-                                "id": image_record["id"],
-                                "image_number": image_record["image_number"],
-                                "error": error_msg
-                            })
-                            
-                            logger.error(f"❌ Error processing image {image_record['image_number']} for blog {blog_id}: {e}")
+                            logger.error(f"❌ {error_msg} for image {image_record['image_number']}")
                         
                     else:
                         # Update status to failed

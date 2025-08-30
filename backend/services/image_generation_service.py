@@ -176,23 +176,52 @@ class ImageGenerationService:
                 )
                 
                 if result["success"]:
-                    return {
-                        "success": True,
-                        "blog_id": blog_id,
-                        "project_id": project_id,
-                        "images": [{
-                            "url": result["image_url"],
-                            "prompt": prompt,
-                            "style": style,
-                            "aspect_ratio": aspect_ratio,
-                            "quality": quality,
-                            "generated_at": datetime.utcnow().isoformat(),
-                            "image_number": 1
-                        }],
-                        "total_generated": 1,
-                        "requested_count": 1,
-                        "metadata": result.get("metadata", {})
-                    }
+                    # Check if we got a URL or base64 data
+                    if result.get("image_url"):
+                        # We have a URL
+                        return {
+                            "success": True,
+                            "blog_id": blog_id,
+                            "project_id": project_id,
+                            "images": [{
+                                "url": result["image_url"],  # FalAIService returns "image_url"
+                                "prompt": prompt,
+                                "style": style,
+                                "aspect_ratio": aspect_ratio,
+                                "quality": quality,
+                                "generated_at": datetime.utcnow().isoformat(),
+                                "image_number": 1
+                            }],
+                            "total_generated": 1,
+                            "requested_count": 1,
+                            "metadata": result.get("metadata", {})
+                        }
+                    elif result.get("image_data"):
+                        # We have base64 data
+                        return {
+                            "success": True,
+                            "blog_id": blog_id,
+                            "project_id": project_id,
+                            "images": [{
+                                "image_data": result["image_data"],  # FalAIService returns "image_data"
+                                "prompt": prompt,
+                                "style": style,
+                                "aspect_ratio": aspect_ratio,
+                                "quality": quality,
+                                "generated_at": datetime.utcnow().isoformat(),
+                                "image_number": 1
+                            }],
+                            "total_generated": 1,
+                            "requested_count": 1,
+                            "metadata": result.get("metadata", {})
+                        }
+                    else:
+                        # No valid image data
+                        return {
+                            "success": False,
+                            "error": "No valid image data returned from Fal AI",
+                            "metadata": result.get("metadata", {})
+                        }
                 else:
                     return result
             else:
