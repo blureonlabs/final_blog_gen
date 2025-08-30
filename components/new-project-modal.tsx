@@ -116,13 +116,16 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
     setSelectedOpenAIKey("")
     setSelectedGeminiKey("")
     setSelectedSerpKey("")
+    setSelectedFalKey("")
     setSerpApiEnabled(false)
     setEnhancedResearch(false)
+    setGenerateImages(false)
+    setNumImagesPerBlog(1)
     setSelectedAIModel("openai")
     setLoading(false)
     setError("")
     setShowUpgradePrompt(false)
-    console.log("🔄 Form reset - SerpAPI:", false, "Enhanced Research:", false)
+    console.log("🔄 Form reset - SerpAPI:", false, "Enhanced Research:", false, "Generate Images:", false, "Num Images:", 1, "Fal AI:", false)
   }
 
   const [name, setName] = useState("")
@@ -132,15 +135,24 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
   const [selectedOpenAIKey, setSelectedOpenAIKey] = useState("")
   const [selectedGeminiKey, setSelectedGeminiKey] = useState("")
   const [selectedSerpKey, setSelectedSerpKey] = useState("")
+  const [selectedFalKey, setSelectedFalKey] = useState("")
   
   // Add SerpAPI toggle state
   const [serpApiEnabled, setSerpApiEnabled] = useState(false)
   const [enhancedResearch, setEnhancedResearch] = useState(false)
   
+  // Image generation settings
+  const [generateImages, setGenerateImages] = useState(false)
+  const [numImagesPerBlog, setNumImagesPerBlog] = useState(1)
+  
   // Debug logging for state changes
   useEffect(() => {
     console.log("🔍 State changed - serpApiEnabled:", serpApiEnabled, "enhancedResearch:", enhancedResearch)
   }, [serpApiEnabled, enhancedResearch])
+  
+  useEffect(() => {
+    console.log("🖼️ Image generation state - generateImages:", generateImages, "numImagesPerBlog:", numImagesPerBlog)
+  }, [generateImages, numImagesPerBlog])
   
   // Simplified AI model selection - just one model
   const [selectedAIModel, setSelectedAIModel] = useState<"openai" | "gemini">("openai")
@@ -177,10 +189,14 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
     const defaultSerp =
       userData.apiKeys.find((k) => k.service === "serp" && k.is_default) ||
       userData.apiKeys.find((k) => k.service === "serp")
+    const defaultFal =
+      userData.apiKeys.find((k) => k.service === "fal" && k.is_default) ||
+      userData.apiKeys.find((k) => k.service === "fal")
 
     setSelectedOpenAIKey(defaultOpenAI?.id || "")
     setSelectedGeminiKey(defaultGemini?.id || "")
     setSelectedSerpKey(defaultSerp?.id || "")
+    setSelectedFalKey(defaultFal?.id || "")
     
     // Reset SerpAPI toggles to default state
     setSerpApiEnabled(false)
@@ -227,13 +243,16 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
       const selectedOpenAI = userData.apiKeys.find((k) => k.id === selectedOpenAIKey)
       const selectedGeminiAPI = userData.apiKeys.find((k) => k.id === selectedGeminiKey)
       const selectedSerpAPI = userData.apiKeys.find((k) => k.id === selectedSerpKey)
+      const selectedFalAPI = userData.apiKeys.find((k) => k.id === selectedFalKey)
 
       // Log final state before submission
       console.log("🚀 Submitting project with state:", {
         serpApiEnabled,
         enhancedResearch,
         selectedAIModel,
-        numBlogs
+        numBlogs,
+        generateImages,
+        numImagesPerBlog
       })
       
       // Simplified project creation
@@ -248,13 +267,17 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
           openai: selectedOpenAI?.id || (isDemoMode ? "demo-openai-key" : ""),
           gemini: selectedGeminiAPI?.id || (isDemoMode ? "demo-gemini-key" : ""),
           serp: selectedSerpAPI?.id || (isDemoMode ? "demo-serb-key" : ""),
+          fal: selectedFalAPI?.id || (isDemoMode ? "demo-fal-key" : ""),
         },
         // AI Model Configuration - using draft_creation_model from database
         draft_creation_model: selectedAIModel,  // Single model selection
         // Add SerpAPI configuration
         serp_api_on: serpApiEnabled,
         serp_api_contents: null,  // Will be populated during research phase
-        enhanced_research: enhancedResearch  // Add enhanced research setting
+        enhanced_research: enhancedResearch,  // Add enhanced research setting
+        // Add image generation configuration
+        generate_images: generateImages,
+        num_images_per_blog: numImagesPerBlog
       })
 
       console.log("✅ Project created successfully:", newProject)
@@ -294,8 +317,11 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
             openai: "demo-openai-key",
             gemini: "demo-gemini-key",
             serp: "demo-serb-key",
+            fal: "demo-fal-key",
           },
           draft_creation_model: selectedAIModel,
+          generate_images: generateImages,
+          num_images_per_blog: numImagesPerBlog,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         }
@@ -314,6 +340,7 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
   const openAIKeys = userData.apiKeys.filter((k) => k.service === "openai")
   const geminiKeys = userData.apiKeys.filter((k) => k.service === "gemini")
   const serpKeys = userData.apiKeys.filter((k) => k.service === "serp")
+  const falKeys = userData.apiKeys.filter((k) => k.service === "fal")
 
   // Simplified model options
   const aiModelOptions = [
@@ -337,6 +364,11 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
   }))
 
   const serpOptions = serpKeys.map(key => ({
+    value: key.id,
+    label: `${key.name} ${key.is_default ? "(Default)" : ""}`
+  }))
+
+  const falOptions = falKeys.map(key => ({
     value: key.id,
     label: `${key.name} ${key.is_default ? "(Default)" : ""}`
   }))
@@ -602,6 +634,100 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
               </div>
             </div>
 
+            {/* Image Generation Configuration */}
+            <div className="space-y-4">
+              <h3 className="flex items-center gap-2 text-lg font-medium text-gray-900">
+                <span className="text-2xl">🖼️</span>
+                Image Generation Configuration
+              </h3>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">🎨</span>
+                      Generate Images
+                    </div>
+                  </label>
+                  <div className="flex items-center space-x-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newValue = !generateImages
+                        console.log("🔄 Toggling Image Generation from", generateImages, "to", newValue)
+                        setGenerateImages(newValue)
+                        // If disabling image generation, reset number of images to 1
+                        if (!newValue) {
+                          setNumImagesPerBlog(1)
+                        }
+                      }}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 ${
+                        generateImages ? 'bg-purple-600' : 'bg-gray-200'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          generateImages ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                    <span className="text-sm text-gray-600">
+                      {generateImages ? 'Enabled' : 'Disabled'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {generateImages 
+                      ? "AI-generated images will be created for each blog post"
+                      : "No images will be generated for blog posts"
+                    }
+                  </p>
+                </div>
+
+                {/* Number of Images Per Blog */}
+                {generateImages && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">🔢</span>
+                        Images Per Blog
+                      </div>
+                    </label>
+                    <Input
+                      type="number"
+                      min="1"
+                      max="4"
+                      value={numImagesPerBlog}
+                      onChange={(e) => setNumImagesPerBlog(parseInt(e.target.value) || 1)}
+                      className="w-full"
+                      disabled={!generateImages}
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Choose between 1-4 images per blog post
+                    </p>
+                  </div>
+                )}
+              </div>
+              
+              {/* Image Generation Status */}
+              {generateImages && (
+                <div className="mt-2 p-3 bg-purple-50 rounded-md border border-purple-200">
+                  <div className="text-xs text-purple-700">
+                    <strong>Image Generation Status:</strong>
+                    <div className="mt-1 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-purple-500"></span>
+                        Image Generation: ON
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-purple-500"></span>
+                        Images per Blog: {numImagesPerBlog}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* API Keys Configuration */}
             <div className="space-y-4">
               <h3 className="text-lg font-medium text-gray-900">API Keys Configuration</h3>
@@ -612,7 +738,7 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
                 }
               </p>
               
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">
                     OpenAI API Key {!isDemoMode && <span className="text-red-500">*</span>}
@@ -671,6 +797,29 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
                       className="text-sm"
                     />
                   )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Fal AI API Key {!isDemoMode && <span className="text-gray-500">(Optional)</span>}
+                    {isDemoMode && <span className="text-gray-500">(Optional)</span>}
+                  </label>
+                  {falKeys.length === 0 ? (
+                    <div className="text-xs text-gray-500">
+                      {isDemoMode ? "No keys configured (optional in demo mode)" : "No keys configured"}
+                    </div>
+                  ) : (
+                    <CustomDropdown
+                      value={selectedFalKey}
+                      onChange={setSelectedFalKey}
+                      options={falOptions}
+                      placeholder="Select Key"
+                      className="text-sm"
+                    />
+                  )}
+                  <p className="text-xs text-gray-500 mt-1">
+                    For AI image generation
+                  </p>
                 </div>
               </div>
             </div>

@@ -18,6 +18,9 @@ export interface Project {
   serp_api_on?: boolean
   serp_api_contents?: string | null
   enhanced_research?: boolean  // Enable enhanced research features
+  // Image Generation Configuration
+  generate_images?: boolean
+  num_images_per_blog?: number
   created_at: string
   updated_at: string
 }
@@ -36,7 +39,7 @@ export interface WordPressAccount {
 export interface APIKey {
   id: string
   name: string
-  service: "openai" | "gemini" | "serp" | "other"
+  service: "openai" | "gemini" | "serp" | "fal" | "other"
   api_key: string
   is_default: boolean
   is_active: boolean
@@ -558,6 +561,8 @@ class SupabaseAPI {
           draft_creation_model: project.draft_creation_model,
           serp_api_on: project.serp_api_on,
           serp_api_contents: project.serp_api_contents,
+          generate_images: project.generate_images || false,
+          num_images_per_blog: project.num_images_per_blog || 1,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         }
@@ -577,6 +582,8 @@ class SupabaseAPI {
         serp_api_on: project.serp_api_on || false,
         enhanced_research: project.enhanced_research || false,  // Add enhanced research field
         serp_api_contents: project.serp_api_contents || null,
+        generate_images: project.generate_images || false,  // Add image generation field
+        num_images_per_blog: project.num_images_per_blog || 1,  // Add number of images per blog field
         user_id: userId
       }
 
