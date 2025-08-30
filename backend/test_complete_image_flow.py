@@ -1,263 +1,140 @@
 #!/usr/bin/env python3
 """
-Complete Image Generation and Processing Flow Test
-This script tests the entire flow from blog generation with placeholders to image generation and S3 storage
+Test the complete image generation flow:
+1. Fal AI generates image
+2. Download from Fal AI
+3. Upload to Supabase Storage
+4. Store URL in database
 """
 
 import asyncio
+import logging
 import os
-import sys
-from dotenv import load_dotenv
+from services.blog_image_processor import BlogImageProcessor
+from core.supabase_client import supabase_client
 
-# Add the backend directory to the Python path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
-from services.blog_generation_service import BlogGenerationService
-from services.image_placeholder_processor import ImagePlaceholderProcessor
-from services.fal_ai_service import FalAIService
-
-# Load environment variables
-load_dotenv()
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 async def test_complete_image_flow():
-    """Test the complete image generation and processing flow"""
-    print("🚀 Testing Complete Image Generation and Processing Flow...")
-    print("=" * 60)
-    
-    # Check required environment variables
-    fal_api_key = os.getenv("FAL_AI_API_KEY")
-    if not fal_api_key:
-        print("❌ FAL_AI_API_KEY not found in environment variables")
-        print("Please set FAL_AI_API_KEY in your .env file")
-        return False
+    """Test the complete image generation and storage flow"""
     
     try:
-        # Initialize services
-        blog_service = BlogGenerationService()
-        image_processor = ImagePlaceholderProcessor()
-        fal_service = FalAIService(fal_api_key)
+        logger.info("🚀 Testing complete image generation flow...")
         
-        print("✅ Services initialized successfully")
+        # Test parameters
+        test_blog_id = "test-blog-123"
+        test_project_id = "test-project-456"
+        test_user_id = "test-user-789"
         
-        # Test 1: Generate blog content with image placeholders
-        print("\n🧪 Test 1: Generating blog content with image placeholders...")
+        # You need to set your actual Fal AI API key
+        fal_api_key = "your-fal-ai-api-key-here"  # Replace with actual key
         
-        test_project_description = "The Future of Artificial Intelligence in Business"
-        test_blog_number = 1
+        if fal_api_key == "your-fal-ai-api-key-here":
+            logger.error("❌ Please set your actual Fal AI API key in the script")
+            return
         
-        blog_result = await blog_service.generate_blog_content(
-            project_description=test_project_description,
-            blog_number=test_blog_number,
-            ai_model="openai",  # or "gemini"
-            project_api_keys={"openai": "test-key"},  # Mock key for testing
-            generate_images=True,
-            num_images_per_blog=2
-        )
+        # Initialize the blog image processor
+        processor = BlogImageProcessor()
+        logger.info("✅ BlogImageProcessor initialized")
         
-        if blog_result["success"]:
-            print("✅ Blog content generated successfully")
-            print(f"   Title: {blog_result['title']}")
-            print(f"   Word count: {blog_result['word_count']}")
-            
-            # Check for image placeholders
-            content = blog_result["content"]
-            placeholders = image_processor.extract_image_placeholders(content)
-            
-            if placeholders:
-                print(f"✅ Found {len(placeholders)} image placeholders:")
-                for i, placeholder in enumerate(placeholders, 1):
-                    print(f"   {i}. [image:{placeholder['description']}]")
-            else:
-                print("⚠️ No image placeholders found in generated content")
-                print("   Content preview:", content[:200] + "...")
-        else:
-            print(f"❌ Blog generation failed: {blog_result.get('error', 'Unknown error')}")
-            return False
+        # Test 1: Process blog for images
+        logger.info("📝 Test 1: Processing blog for image placeholders...")
         
-        # Test 2: Extract and validate image placeholders
-        print("\n🧪 Test 2: Extracting and validating image placeholders...")
+        test_content = """
+        This is a test blog post with image placeholders.
         
-        validation_result = image_processor.validate_image_placeholders(content, 2)
+        [image:A beautiful sunset over mountains, photographic style]
         
-        if validation_result["valid"]:
-            print("✅ Image placeholder validation passed")
-            print(f"   Found: {validation_result['actual_count']} placeholders")
-            print(f"   Expected: {validation_result['expected_count']} placeholders")
-        else:
-            print("⚠️ Image placeholder validation failed")
-            print(f"   Found: {validation_result['actual_count']} placeholders")
-            print(f"   Expected: {validation_result['expected_count']} placeholders")
-            if validation_result.get("error"):
-                print(f"   Error: {validation_result['error']}")
+        [image:A cozy coffee shop interior with warm lighting]
         
-        # Test 3: Test Fal AI service connectivity
-        print("\n🧪 Test 3: Testing Fal AI service connectivity...")
-        
-        is_valid = await fal_service.validate_api_key()
-        if is_valid:
-            print("✅ Fal AI API key is valid")
-        else:
-            print("❌ Fal AI API key is invalid")
-            return False
-        
-        # Test 4: Test image generation (single image)
-        print("\n🧪 Test 4: Testing single image generation...")
-        
-        test_prompt = "Modern office workspace with productivity tools and organized desk setup"
-        
-        image_result = await fal_service.generate_image(
-            prompt=test_prompt,
-            style="photographic",
-            aspect_ratio="16:9",
-            quality="standard"
-        )
-        
-        if image_result["success"]:
-            print("✅ Single image generated successfully")
-            print(f"   Image URL: {image_result['image_url']}")
-            print(f"   Metadata: {image_result['metadata']}")
-        else:
-            print(f"❌ Single image generation failed: {image_result.get('error')}")
-            return False
-        
-        # Test 5: Test multiple image generation
-        print("\n🧪 Test 5: Testing multiple image generation...")
-        
-        multi_result = await fal_service.generate_multiple_images(
-            prompt=test_prompt,
-            count=2,
-            style="modern",
-            aspect_ratio="16:9",
-            quality="standard"
-        )
-        
-        if multi_result["success"]:
-            print("✅ Multiple images generated successfully")
-            print(f"   Generated: {multi_result['total_generated']}/{multi_result['requested_count']}")
-            for i, img in enumerate(multi_result["images"]):
-                print(f"   Image {i+1}: {img['url']}")
-        else:
-            print(f"❌ Multiple image generation failed: {multi_result.get('error')}")
-            return False
-        
-        # Test 6: Test image placeholder processor
-        print("\n🧪 Test 6: Testing image placeholder processor...")
-        
-        # Create a mock blog content with placeholders
-        mock_content = f"""
-        # {test_project_description}
-        
-        This is a test blog post about artificial intelligence in business.
-        
-        [image:{test_prompt}]
-        
-        Here's some more content about AI applications.
-        
-        [image:Data visualization showing AI adoption trends in different industries]
-        
-        The future looks promising for AI integration.
+        This is the end of the test blog.
         """
         
-        # Extract placeholders
-        extracted_placeholders = image_processor.extract_image_placeholders(mock_content)
+        process_result = await processor.process_blog_for_images(
+            blog_id=test_blog_id,
+            project_id=test_project_id,
+            title="Test Blog for Image Generation",
+            content=test_content,
+            user_id=test_user_id,
+            fal_api_key=fal_api_key
+        )
         
-        if len(extracted_placeholders) == 2:
-            print("✅ Image placeholder extraction working correctly")
-            for i, placeholder in enumerate(extracted_placeholders, 1):
-                print(f"   {i}. {placeholder['placeholder']}")
+        if process_result["success"]:
+            logger.info(f"✅ Blog processing successful: {process_result['images_processed']} images found")
+            
+            # Test 2: Generate images for the blog
+            logger.info("🎨 Test 2: Generating images for the blog...")
+            
+            generate_result = await processor.generate_images_for_blog(
+                blog_id=test_blog_id,
+                project_id=test_project_id,
+                user_id=test_user_id,
+                fal_api_key=fal_api_key,
+                style="photographic",
+                aspect_ratio="16:9",
+                quality="standard"
+            )
+            
+            if generate_result["success"]:
+                logger.info(f"✅ Image generation successful: {generate_result['images_generated']} images generated")
+                
+                # Check the database for results
+                logger.info("📊 Checking database results...")
+                
+                db_response = supabase_client.table("images").select("*").eq("blog_id", test_blog_id).execute()
+                
+                if db_response.data:
+                    logger.info(f"📸 Found {len(db_response.data)} images in database:")
+                    
+                    for img in db_response.data:
+                        logger.info(f"   Image {img['image_number']}:")
+                        logger.info(f"     Status: {img['status']}")
+                        logger.info(f"     Prompt: {img['prompt']}")
+                        logger.info(f"     Storage URL: {img.get('s3_url', 'Not set')[:100] if img.get('s3_url') else 'Not set'}...")
+                        
+                        if img['status'] == 'generated' and img.get('s3_url'):
+                            logger.info(f"     ✅ Successfully stored in Supabase Storage!")
+                        elif img['status'] == 'failed':
+                            logger.info(f"     ❌ Failed: {img.get('error_message', 'Unknown error')}")
+                        else:
+                            logger.info(f"     ⏳ Still processing...")
+                else:
+                    logger.warning("⚠️ No images found in database")
+                
+                # Test 3: Check Supabase Storage
+                logger.info("🪣 Test 3: Checking Supabase Storage...")
+                
+                try:
+                    # List files in the images bucket
+                    storage_files = supabase_client.storage.from_("images").list("")
+                    logger.info(f"📁 Files in storage bucket: {storage_files}")
+                    
+                    # Check for our test images
+                    test_files = [f for f in storage_files if test_blog_id in f]
+                    if test_files:
+                        logger.info(f"✅ Found {len(test_files)} test images in storage:")
+                        for file in test_files:
+                            logger.info(f"   📄 {file}")
+                    else:
+                        logger.warning("⚠️ No test images found in storage bucket")
+                        
+                except Exception as storage_error:
+                    logger.error(f"❌ Error checking storage: {storage_error}")
+                
+            else:
+                logger.error(f"❌ Image generation failed: {generate_result.get('error', 'Unknown error')}")
+                
         else:
-            print(f"❌ Expected 2 placeholders, found {len(extracted_placeholders)}")
-            return False
+            logger.error(f"❌ Blog processing failed: {process_result.get('error', 'Unknown error')}")
         
-        # Test 7: Test placeholder replacement with mock images
-        print("\n🧪 Test 7: Testing placeholder replacement...")
-        
-        mock_images = [
-            {
-                "url": "https://example.com/image1.jpg",
-                "alt_text": test_prompt,
-                "image_number": 1
-            },
-            {
-                "url": "https://example.com/image2.jpg",
-                "alt_text": "Data visualization showing AI adoption trends",
-                "image_number": 2
-            }
-        ]
-        
-        replaced_content = image_processor.replace_placeholders_with_images(mock_content, mock_images)
-        
-        if "[image:" not in replaced_content and "<img" in replaced_content:
-            print("✅ Placeholder replacement working correctly")
-            print("   Content now contains HTML image tags")
-        else:
-            print("❌ Placeholder replacement failed")
-            print("   Content still contains placeholders or missing HTML")
-            return False
-        
-        print("\n" + "=" * 60)
-        print("🎉 All tests passed! Complete image flow is working correctly.")
-        print("\n📋 Summary of what was tested:")
-        print("   ✅ Blog generation with image placeholders")
-        print("   ✅ Image placeholder extraction and validation")
-        print("   ✅ Fal AI service connectivity")
-        print("   ✅ Single and multiple image generation")
-        print("   ✅ Image placeholder processing")
-        print("   ✅ Placeholder replacement with HTML")
-        
-        return True
+        logger.info("🎉 Complete image flow test finished!")
         
     except Exception as e:
-        print(f"\n❌ Test failed with error: {e}")
+        logger.error(f"❌ Test failed: {e}")
         import traceback
-        print(f"Full traceback: {traceback.format_exc()}")
-        return False
-
-async def test_s3_integration():
-    """Test S3 integration for image storage"""
-    print("\n🧪 Testing S3 Integration...")
-    
-    try:
-        from services.s3_storage_service import S3StorageService
-        
-        s3_service = S3StorageService()
-        
-        # Test S3 connection
-        print("   Testing S3 connection...")
-        
-        # This would test actual S3 connectivity
-        # For now, just check if the service can be instantiated
-        print("✅ S3 service initialized successfully")
-        
-        return True
-        
-    except Exception as e:
-        print(f"❌ S3 integration test failed: {e}")
-        return False
-
-async def main():
-    """Main test function"""
-    print("🚀 Starting Complete Image Flow Tests...")
-    
-    # Test the main flow
-    main_test_success = await test_complete_image_flow()
-    
-    # Test S3 integration
-    s3_test_success = await test_s3_integration()
-    
-    print("\n" + "=" * 60)
-    print("📊 Final Test Results:")
-    print(f"   Main Flow: {'✅ PASS' if main_test_success else '❌ FAIL'}")
-    print(f"   S3 Integration: {'✅ PASS' if s3_test_success else '❌ PASS'}")
-    
-    if main_test_success and s3_test_success:
-        print("\n🎉 All tests passed! The complete image generation and processing flow is ready.")
-        return True
-    else:
-        print("\n⚠️ Some tests failed. Please check the errors above.")
-        return False
+        logger.error(f"Traceback: {traceback.format_exc()}")
 
 if __name__ == "__main__":
-    # Run the tests
-    success = asyncio.run(main())
-    sys.exit(0 if success else 1)
+    asyncio.run(test_complete_image_flow())

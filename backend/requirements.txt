@@ -17,5 +17,5 @@ openai==0.28.1
 requests>=2.31.0
 aiohttp>=3.8.0
 google-generativeai>=0.3.0
-fal>=0.7.0
+fal-client>=0.7.0
 Pillow>=10.0.0

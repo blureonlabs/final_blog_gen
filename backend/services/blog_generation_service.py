@@ -12,6 +12,7 @@ from core.supabase_client import supabase_client
 from models.blog import BlogCreate, BlogStatus
 from services.s3_storage_service import S3StorageService
 from services.image_placeholder_processor import ImagePlaceholderProcessor
+from services.blog_image_processor import BlogImageProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ class BlogGenerationService:
         self.gemini_client = None
         self.s3_storage = S3StorageService()
         self.image_processor = ImagePlaceholderProcessor()
+        self.blog_image_processor = BlogImageProcessor()
         self._initialize_clients()
     
     def _initialize_clients(self):
@@ -591,6 +593,36 @@ class BlogGenerationService:
                     blog_duration = blog_end_time - blog_start_time
                     logger.info(f"✅ Blog {blog_number} COMPLETED and SAVED in {blog_duration:.2f}s")
                     
+                    # AUTOMATIC IMAGE PROCESSING - if enabled for this project
+                    if generate_images and num_images_per_blog > 0:
+                        try:
+                            logger.info(f"🎨 Starting automatic image processing for blog {blog_number} (ID: {blog_record['id']})")
+                            
+                            # Get user's Fal AI API key for image generation
+                            user_id = self._get_user_id_from_project(project_id)
+                            if user_id:
+                                fal_api_key = self._get_fal_api_key_for_user(user_id)
+                                if fal_api_key:
+                                    # Start image processing in background (don't wait for completion)
+                                    asyncio.create_task(self._process_images_for_blog_async(
+                                        blog_record["id"],
+                                        project_id,
+                                        result["title"],
+                                        result["content"],
+                                        user_id,
+                                        fal_api_key
+                                    ))
+                                    logger.info(f"🚀 Image processing started in background for blog {blog_record['id']}")
+                                else:
+                                    logger.warning(f"⚠️ No Fal AI API key found for user {user_id} - skipping image processing")
+                            else:
+                                logger.warning(f"⚠️ Could not determine user ID for project {project_id} - skipping image processing")
+                        except Exception as img_error:
+                            logger.error(f"❌ Failed to start automatic image processing for blog {blog_record['id']}: {img_error}")
+                            # Don't fail the blog generation if image processing fails
+                    else:
+                        logger.info(f"📝 Image processing not enabled for blog {blog_number} (generate_images: {generate_images}, num_images: {num_images_per_blog})")
+                    
                     # Return the saved blog record instead of just the generation result
                     return {
                         **result,
@@ -841,6 +873,36 @@ class BlogGenerationService:
                             "status": BlogStatus.READY,
                             "updated_at": datetime.now().isoformat()
                         }).eq("id", blog_record["id"]).execute()
+                    
+                    # AUTOMATIC IMAGE PROCESSING - if enabled for this project
+                    if generate_images and num_images_per_blog > 0:
+                        try:
+                            logger.info(f"🎨 Starting automatic image processing for blog {blog_number} (ID: {blog_record['id']})")
+                            
+                            # Get user's Fal AI API key for image generation
+                            user_id = self._get_user_id_from_project(project_id)
+                            if user_id:
+                                fal_api_key = self._get_fal_api_key_for_user(user_id)
+                                if fal_api_key:
+                                    # Start image processing in background (don't wait for completion)
+                                    asyncio.create_task(self._process_images_for_blog_async(
+                                        blog_record["id"],
+                                        project_id,
+                                        blog_data["title"],
+                                        blog_data["content"],
+                                        user_id,
+                                        fal_api_key
+                                    ))
+                                    logger.info(f"🚀 Image processing started in background for blog {blog_record['id']}")
+                                else:
+                                    logger.warning(f"⚠️ No Fal AI API key found for user {user_id} - skipping image processing")
+                            else:
+                                logger.warning(f"⚠️ Could not determine user ID for project {project_id} - skipping image processing")
+                        except Exception as img_error:
+                            logger.error(f"❌ Failed to start automatic image processing for blog {blog_record['id']}: {img_error}")
+                            # Don't fail the blog generation if image processing fails
+                    else:
+                        logger.info(f"📝 Image processing not enabled for blog {blog_number} (generate_images: {generate_images}, num_images: {num_images_per_blog})")
                     
                     generated_blogs.append(blog_record)
                     logger.info(f"✅ Blog {blog_number} generated successfully: {blog_data['title']}")
@@ -1596,6 +1658,59 @@ class BlogGenerationService:
         except Exception as e:
             logger.error(f"Error updating blog content with S3 images: {e}")
             return content
+    
+    def _get_user_id_from_project(self, project_id: str) -> str:
+        """Get user ID from project ID"""
+        try:
+            response = supabase_client.table("projects").select("user_id").eq("id", project_id).execute()
+            if response.data:
+                return response.data[0]["user_id"]
+            return None
+        except Exception as e:
+            logger.error(f"Error getting user ID from project {project_id}: {e}")
+            return None
+    
+    def _get_fal_api_key_for_user(self, user_id: str) -> str:
+        """Get Fal AI API key for user"""
+        try:
+            response = supabase_client.table("api_keys").select("api_key").eq("user_id", user_id).eq("service", "fal").eq("is_active", True).execute()
+            if response.data:
+                return response.data[0]["api_key"]
+            return None
+        except Exception as e:
+            logger.error(f"Error getting Fal AI API key for user {user_id}: {e}")
+            return None
+    
+    async def _process_images_for_blog_async(
+        self,
+        blog_id: str,
+        project_id: str,
+        title: str,
+        content: str,
+        user_id: str,
+        fal_api_key: str
+    ):
+        """Process images for a blog asynchronously (background task)"""
+        try:
+            logger.info(f"🎨 Processing images for blog {blog_id} in background")
+            
+            # Use the blog image processor to handle the complete workflow
+            result = await self.blog_image_processor.process_and_generate_images(
+                blog_id=blog_id,
+                project_id=project_id,
+                title=title,
+                content=content,
+                user_id=user_id,
+                fal_api_key=fal_api_key
+            )
+            
+            if result["success"]:
+                logger.info(f"✅ Background image processing completed for blog {blog_id}: {result['total_images_generated']} images generated")
+            else:
+                logger.error(f"❌ Background image processing failed for blog {blog_id}: {result.get('error', 'Unknown error')}")
+                
+        except Exception as e:
+            logger.error(f"❌ Background image processing error for blog {blog_id}: {e}")
 
 # Create service instance
 blog_generation_service = BlogGenerationService()

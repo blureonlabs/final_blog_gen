@@ -1,24 +1,34 @@
 import os
 import logging
-import aiohttp
 import asyncio
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import json
 
+# Import the official fal-client package
+try:
+    import fal_client
+    FAL_CLIENT_AVAILABLE = True
+except ImportError:
+    FAL_CLIENT_AVAILABLE = False
+    fal_client = None
+
 logger = logging.getLogger(__name__)
 
 class FalAIService:
-    """Service for generating images using Fal AI FLUX.1 [dev] model"""
+    """Service for generating images using Fal AI FLUX.1 [dev] model with official client"""
     
     def __init__(self, api_key: str):
         """Initialize the Fal AI service with API key"""
         self.api_key = api_key
-        self.base_url = "https://fal.run/fal-ai/flux"
-        self.headers = {
-            "Authorization": f"Key {api_key}",
-            "Content-Type": "application/json"
-        }
+        
+        # Set the API key for fal-client
+        if FAL_CLIENT_AVAILABLE:
+            os.environ["FAL_KEY"] = api_key
+            logger.info("✅ Fal AI client initialized with API key")
+        else:
+            logger.error("❌ fal-client package not available. Please install with: pip install fal-client")
+            raise ImportError("fal-client package not available")
         
     async def generate_image(
         self,
@@ -47,78 +57,77 @@ class FalAIService:
                 "ultra": 50
             }
             
-            # Map aspect ratio to dimensions
-            dimensions = self._get_dimensions(aspect_ratio)
+            # Map aspect ratio to official Fal AI format
+            image_size = self._map_aspect_ratio_to_fal_format(aspect_ratio)
             
-            # Prepare the request payload
-            payload = {
-                "prompt": f"{prompt}, {style} style, high quality, detailed",
-                "image_dimensions": f"{dimensions['width']}x{dimensions['height']}",
+            # Prepare the request arguments
+            arguments = {
+                "prompt": f"{prompt}, {style} style, high quality, detailed, professional",
+                "image_size": image_size,
                 "num_inference_steps": quality_steps.get(quality, 28),
-                "guidance_scale": 7.5,
-                "scheduler": "euler_a",
-                "seed": None,  # Random seed for variety
-                "sync_mode": True
+                "guidance_scale": 3.5,  # Using default from docs
+                "sync_mode": True,  # Wait for completion
+                "num_images": 1,
+                "enable_safety_checker": True,
+                "output_format": "jpeg",
+                "acceleration": "none"
             }
             
-            logger.info(f"Generating image with prompt: {prompt[:100]}...")
+            logger.info(f"🎨 Generating image with Fal AI FLUX.1 [dev]")
+            logger.info(f"📝 Prompt: {prompt[:100]}...")
+            logger.info(f"🔧 Arguments: {arguments}")
             
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    self.base_url,
-                    headers=self.headers,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=120)
-                ) as response:
-                    
-                    if response.status == 200:
-                        result = await response.json()
+            # Use the official fal-client to submit the request
+            result = fal_client.submit(
+                "fal-ai/flux/dev",
+                arguments=arguments
+            )
+            
+            logger.info(f"📤 Request submitted to Fal AI with ID: {result.request_id}")
+            
+            # Wait for the result (since sync_mode=True)
+            final_result = fal_client.result("fal-ai/flux/dev", result.request_id)
+            
+            if final_result and "images" in final_result and len(final_result["images"]) > 0:
+                image_url = final_result["images"][0]["url"]
+                
+                logger.info(f"✅ Image generated successfully by Fal AI!")
+                logger.info(f"🖼️ Image URL: {image_url[:100]}...")
+                
+                return {
+                    "success": True,
+                    "image_url": image_url,
+                    "metadata": {
+                        "prompt": prompt,
+                        "style": style,
+                        "aspect_ratio": aspect_ratio,
+                        "quality": quality,
+                        "inference_steps": quality_steps.get(quality, 28),
+                        "generated_at": datetime.utcnow().isoformat(),
+                        "fal_request_id": result.request_id,
+                        "fal_response": final_result
+                    }
+                }
+            else:
+                logger.error("❌ No images returned from Fal AI")
+                return {
+                    "success": False,
+                    "error": "No images returned from Fal AI",
+                    "metadata": {
+                        "prompt": prompt,
+                        "fal_response": final_result
+                    }
+                }
                         
-                        if "images" in result and len(result["images"]) > 0:
-                            image_url = result["images"][0]["url"]
-                            
-                            logger.info(f"✅ Image generated successfully: {image_url}")
-                            
-                            return {
-                                "success": True,
-                                "image_url": image_url,
-                                "metadata": {
-                                    "prompt": prompt,
-                                    "style": style,
-                                    "aspect_ratio": aspect_ratio,
-                                    "quality": quality,
-                                    "dimensions": dimensions,
-                                    "inference_steps": quality_steps.get(quality, 28),
-                                    "generated_at": datetime.utcnow().isoformat(),
-                                    "fal_response": result
-                                }
-                            }
-                        else:
-                            logger.error("No images returned from Fal AI")
-                            return {
-                                "success": False,
-                                "error": "No images returned from Fal AI",
-                                "response": result
-                            }
-                    else:
-                        error_text = await response.text()
-                        logger.error(f"Fal AI API error: {response.status} - {error_text}")
-                        return {
-                            "success": False,
-                            "error": f"API error {response.status}: {error_text}"
-                        }
-                        
-        except asyncio.TimeoutError:
-            logger.error("Image generation timed out")
-            return {
-                "success": False,
-                "error": "Image generation timed out"
-            }
         except Exception as e:
-            logger.error(f"Error generating image: {e}")
+            logger.error(f"❌ Error generating image with Fal AI: {e}")
             return {
                 "success": False,
-                "error": str(e)
+                "error": str(e),
+                "metadata": {
+                    "prompt": prompt,
+                    "error": str(e)
+                }
             }
     
     async def generate_multiple_images(
@@ -203,6 +212,17 @@ class FalAIService:
                 "total_generated": 0,
                 "requested_count": count
             }
+    
+    def _map_aspect_ratio_to_fal_format(self, aspect_ratio: str) -> str:
+        """Map aspect ratio string to Fal AI official format"""
+        fal_format_map = {
+            "16:9": "landscape_16_9",
+            "4:3": "landscape_4_3", 
+            "1:1": "square",
+            "3:4": "portrait_4_3",
+            "9:16": "portrait_16_9"
+        }
+        return fal_format_map.get(aspect_ratio, "landscape_4_3")
     
     def _get_dimensions(self, aspect_ratio: str) -> Dict[str, int]:
         """Get width and height dimensions for given aspect ratio"""
