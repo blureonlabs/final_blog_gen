@@ -90,6 +90,47 @@ class ImagePlaceholderProcessor:
         except Exception as e:
             logger.error(f"Error replacing image placeholders: {e}")
             return content
+
+    def replace_placeholders_with_wordpress_urls(self, content: str, wordpress_image_urls: List[str]) -> str:
+        """
+        Replace [image: ...] placeholders in order with <img src="..."> tags using WordPress URLs.
+        
+        Args:
+            content: The raw blog content containing [image: ...] placeholders.
+            wordpress_image_urls: Ordered list of WordPress image URLs (1st = first placeholder, etc.)
+            
+        Returns:
+            Content with placeholders replaced by WordPress image URLs
+        """
+        try:
+            if not wordpress_image_urls:
+                logger.info("No WordPress image URLs provided for replacement")
+                return content
+            
+            idx = 0
+            
+            def replacer(match):
+                nonlocal idx
+                desc = match.group(1).strip()
+                if idx < len(wordpress_image_urls):
+                    url = wordpress_image_urls[idx]
+                    idx += 1
+                    logger.info(f"Replacing placeholder {idx} with WordPress URL: {url}")
+                    return f'<img src="{url}" alt="{desc}" class="img-fluid" style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);" loading="lazy" />'
+                else:
+                    logger.warning(f"No more WordPress URLs available for placeholder {idx + 1}")
+                    return match.group(0)  # fallback if no URL left
+            
+            # Use the same regex pattern as extract_image_placeholders for consistency
+            pattern = r"\[image:\s*(.*?)\]"
+            result = re.sub(pattern, replacer, content)
+            
+            logger.info(f"✅ Replaced {min(len(wordpress_image_urls), len(re.findall(pattern, content)))} image placeholders with WordPress URLs")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error replacing placeholders with WordPress URLs: {e}")
+            return content
     
     def _create_image_html(self, image_data: Dict[str, Any], placeholder_data: Dict[str, Any]) -> str:
         """
@@ -558,3 +599,39 @@ class ImagePlaceholderProcessor:
         except Exception as e:
             logger.error(f"Error storing image in S3: {e}")
             return None
+
+    async def get_wordpress_image_urls_for_blog(self, blog_id: str) -> List[str]:
+        """
+        Get WordPress image URLs for a blog, ordered by image_number.
+        
+        Args:
+            blog_id: Blog ID to fetch images for
+            
+        Returns:
+            Ordered list of WordPress image URLs
+        """
+        try:
+            logger.info(f"Fetching WordPress image URLs for blog {blog_id}")
+            
+            # Get images that have been uploaded to WordPress
+            response = supabase_client.table("images").select(
+                "image_number, wordpress_media_url"
+            ).eq("blog_id", blog_id).eq("status", "generated").not_.is_("wordpress_media_url", "null").order("image_number").execute()
+            
+            if not response.data:
+                logger.info(f"No WordPress images found for blog {blog_id}")
+                return []
+            
+            # Extract URLs in order
+            wordpress_urls = []
+            for image in response.data:
+                if image.get("wordpress_media_url"):
+                    wordpress_urls.append(image["wordpress_media_url"])
+                    logger.info(f"Found WordPress URL for image {image['image_number']}: {image['wordpress_media_url']}")
+            
+            logger.info(f"✅ Retrieved {len(wordpress_urls)} WordPress image URLs for blog {blog_id}")
+            return wordpress_urls
+            
+        except Exception as e:
+            logger.error(f"Error fetching WordPress image URLs for blog {blog_id}: {e}")
+            return []

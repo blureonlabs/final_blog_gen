@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 s3_storage = S3StorageService()
 
 @shared_task(bind=True, name="publish_to_wordpress")
-def publish_to_wordpress_task(self, blog_id: str, wordpress_account_id: str, 
+async def publish_to_wordpress_task(self, blog_id: str, wordpress_account_id: str, 
                              publish_status: str = "draft"):
     """
     Publish blog to WordPress
@@ -54,7 +54,7 @@ def publish_to_wordpress_task(self, blog_id: str, wordpress_account_id: str,
         logger.info(f"🔄 Blog {blog_id} status remains 'ready' during publishing (constraint bypass)")
         
         # Prepare post data for WordPress
-        post_data = prepare_wordpress_post(blog_data, publish_status)
+        post_data = await prepare_wordpress_post(blog_data, publish_status)
         if not post_data:
             logger.error(f"❌ Failed to prepare WordPress post data for blog {blog_id}")
             update_blog_status(blog_id, BlogStatus.FAILED, "Failed to prepare post data")
@@ -114,7 +114,7 @@ def publish_to_wordpress_task(self, blog_id: str, wordpress_account_id: str,
         update_blog_status(blog_id, BlogStatus.FAILED, str(e))
         raise
 
-def prepare_wordpress_post(blog_data: Dict, publish_status: str) -> Dict:
+async def prepare_wordpress_post(blog_data: Dict, publish_status: str) -> Dict:
     """Prepare blog data for WordPress API"""
     try:
         logger.info(f"🔍 Preparing WordPress post data for blog: {blog_data.get('title', 'Unknown')}")
@@ -123,6 +123,7 @@ def prepare_wordpress_post(blog_data: Dict, publish_status: str) -> Dict:
         title = blog_data.get("title", "Untitled Blog Post")
         content = blog_data.get("content", "")
         seo_meta = blog_data.get("seo_meta", {})
+        blog_id = blog_data.get("id")
         
         # Validate required fields
         if not title or not content:
@@ -130,6 +131,65 @@ def prepare_wordpress_post(blog_data: Dict, publish_status: str) -> Dict:
             raise ValueError("Title and content are required for WordPress publishing")
         
         logger.info(f"✅ Content validation passed - title: {len(title)} chars, content: {len(content)} chars")
+        
+        # Replace image placeholders with WordPress URLs if available
+        # Skip if we're already using stored processed content
+        if blog_id and blog_data.get("content_source") != "stored_processed":
+            try:
+                from services.image_placeholder_processor import ImagePlaceholderProcessor
+                
+                image_processor = ImagePlaceholderProcessor()
+                wordpress_urls = await image_processor.get_wordpress_image_urls_for_blog(blog_id)
+                
+                if wordpress_urls:
+                    logger.info(f"🖼️ Found {len(wordpress_urls)} WordPress images, replacing placeholders in content")
+                    original_content = content
+                    content = image_processor.replace_placeholders_with_wordpress_urls(content, wordpress_urls)
+                    
+                    if content != original_content:
+                        logger.info(f"✅ Successfully replaced image placeholders in content")
+                        logger.info(f"📊 Content length changed from {len(original_content)} to {len(content)} characters")
+                        
+                        # Store the processed content in processed_content column for future use
+                        try:
+                            await store_processed_content(blog_id, content, original_content)
+                            logger.info(f"💾 Stored processed content for future use")
+                            
+                            # Add a log entry to generation_logs to track the processing
+                            try:
+                                current_logs = get_current_generation_logs(blog_id)
+                                current_logs.append({
+                                    "step": "content_processing",
+                                    "timestamp": datetime.now().isoformat(),
+                                    "status": "success",
+                                    "action": "image_placeholder_replacement",
+                                    "content_modified": True,
+                                    "images_replaced": True,
+                                    "processing_summary": f"Processed content: {len(original_content)} → {len(content)} characters"
+                                })
+                                
+                                # Update generation_logs
+                                supabase_client.table("blogs").update({
+                                    "generation_logs": current_logs
+                                }).eq("id", blog_id).execute()
+                                
+                                logger.info(f"📝 Added processing log entry to generation_logs")
+                            except Exception as log_error:
+                                logger.warning(f"⚠️ Could not add processing log entry: {log_error}")
+                                
+                        except Exception as store_error:
+                            logger.warning(f"⚠️ Could not store processed content: {store_error}")
+                    else:
+                        logger.info(f"ℹ️ No image placeholders found in content or no replacements made")
+                else:
+                    logger.info(f"ℹ️ No WordPress images found for blog {blog_id}, content will be published as-is")
+                    
+            except Exception as e:
+                logger.warning(f"⚠️ Could not process image placeholders: {e}, content will be published as-is")
+        elif blog_data.get("content_source") == "stored_processed":
+            logger.info(f"🖼️ Using stored processed content - skipping image replacement")
+        else:
+            logger.info(f"ℹ️ No blog_id available - skipping image processing")
         
         # Prepare WordPress post data
         post_data = {
@@ -390,6 +450,16 @@ def get_blog_data(blog_id: str) -> Dict[str, Any]:
             logger.error(f"❌ No content found for blog {blog_id} - storage_bucket: {storage_bucket}, storage_path: {storage_path}")
             return None
         
+        # Check if we have stored processed content (with images already replaced)
+        stored_processed_content = get_stored_processed_content(blog_id)
+        if stored_processed_content:
+            logger.info(f"🖼️ Using stored processed content (with images already replaced)")
+            blog_data["content"] = stored_processed_content
+            blog_data["content_source"] = "stored_processed"
+        else:
+            logger.info(f"📝 Using original content (images will be replaced during publishing)")
+            blog_data["content_source"] = "original"
+        
         # Ensure we have the required fields for WordPress publishing
         required_fields = ["title", "content"]
         missing_fields = [field for field in required_fields if not blog_data.get(field)]
@@ -399,6 +469,7 @@ def get_blog_data(blog_id: str) -> Dict[str, Any]:
             return None
         
         logger.info(f"✅ Blog data ready for WordPress publishing: {blog_data.get('title')}")
+        logger.info(f"📊 Content processing status: {blog_data.get('content_source')}, Length: {len(blog_data.get('content', ''))} characters")
         return blog_data
         
     except Exception as e:
@@ -487,6 +558,44 @@ def get_current_generation_logs(blog_id: str) -> List[Dict]:
     except Exception as e:
         logger.error(f"Error fetching generation logs: {e}")
         return []
+
+async def store_processed_content(blog_id: str, processed_content: str, original_content: str):
+    """Store processed content in processed_content column for future use"""
+    try:
+        logger.info(f"💾 Storing processed content for blog {blog_id}")
+        
+        # Update the blog record with processed content
+        update_data = {
+            "processed_content": processed_content,
+            "updated_at": datetime.now().isoformat()
+        }
+        
+        response = supabase_client.table("blogs").update(update_data).eq("id", blog_id).execute()
+        
+        if response.data:
+            logger.info(f"✅ Processed content stored successfully for blog {blog_id}")
+        else:
+            logger.error(f"❌ Failed to store processed content for blog {blog_id}")
+            
+    except Exception as e:
+        logger.error(f"❌ Error storing processed content: {e}")
+        raise
+
+def get_stored_processed_content(blog_id: str) -> str:
+    """Get stored processed content from processed_content column if available"""
+    try:
+        response = supabase_client.table("blogs").select("processed_content").eq("id", blog_id).execute()
+        if response.data and response.data[0].get("processed_content"):
+            processed_content = response.data[0]["processed_content"]
+            logger.info(f"✅ Found stored processed content for blog {blog_id}")
+            return processed_content
+        
+        logger.info(f"ℹ️ No stored processed content found for blog {blog_id}")
+        return None
+        
+    except Exception as e:
+        logger.error(f"❌ Error retrieving stored processed content: {e}")
+        return None
 
 @shared_task(bind=True, name="bulk_publish_to_wordpress")
 def bulk_publish_to_wordpress_task(self, project_id: str, wordpress_account_id: str, 

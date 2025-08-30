@@ -300,8 +300,8 @@ async def publish_blog(
         try:
             logger.info(f"🚀 Starting WordPress publishing for blog {blog_id}")
             
-            # Call the function directly
-            result = publish_to_wordpress_task(
+            # Call the async function directly with await
+            result = await publish_to_wordpress_task(
                 str(blog_id),
                 str(publish_request.wordpress_account_id),
                 publish_request.publish_status
