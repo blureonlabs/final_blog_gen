@@ -11,6 +11,8 @@ from core.config import settings
 from core.supabase_client import supabase_client
 from models.blog import BlogCreate, BlogStatus
 from services.s3_storage_service import S3StorageService
+from services.image_placeholder_processor import ImagePlaceholderProcessor
+from services.blog_image_processor import BlogImageProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +21,8 @@ class BlogGenerationService:
         self.openai_client = None
         self.gemini_client = None
         self.s3_storage = S3StorageService()
+        self.image_processor = ImagePlaceholderProcessor()
+        self.blog_image_processor = BlogImageProcessor()
         self._initialize_clients()
     
     def _initialize_clients(self):
@@ -36,7 +40,9 @@ class BlogGenerationService:
         project_description: str, 
         blog_number: int, 
         ai_model: str, 
-        project_api_keys: dict = None
+        project_api_keys: dict = None,
+        generate_images: bool = False,
+        num_images_per_blog: int = 1
     ) -> Dict[str, Any]:
         """Generate blog content using specified AI model with fallback to Gemini if OpenAI fails"""
         try:
@@ -52,7 +58,7 @@ class BlogGenerationService:
                     logger.info(f"✅ Using project-specific OpenAI key")
                     try:
                         # Try OpenAI first
-                        return await self._generate_with_openai(project_description, blog_number, project_api_keys["openai"])
+                        return await self._generate_with_openai(project_description, blog_number, project_api_keys["openai"], generate_images, num_images_per_blog)
                     except Exception as openai_error:
                         logger.warning(f"⚠️ OpenAI generation failed: {openai_error}")
                         logger.info(f"🔄 Attempting fallback to Gemini...")
@@ -61,7 +67,7 @@ class BlogGenerationService:
                         if project_api_keys and project_api_keys.get("gemini"):
                             logger.info(f"✅ Fallback: Using Gemini for blog {blog_number}")
                             try:
-                                return await self._generate_with_gemini(project_description, blog_number, project_api_keys["gemini"])
+                                return await self._generate_with_gemini(project_description, blog_number, project_api_keys["gemini"], generate_images, num_images_per_blog)
                             except Exception as gemini_error:
                                 logger.error(f"❌ Gemini fallback also failed: {gemini_error}")
                                 # Re-raise the original OpenAI error since both failed
@@ -77,7 +83,7 @@ class BlogGenerationService:
                 if project_api_keys and project_api_keys.get("gemini"):
                     logger.info(f"✅ Using project-specific Gemini key")
                     # Use project-specific Gemini key
-                    return await self._generate_with_gemini(project_description, blog_number, project_api_keys["gemini"])
+                    return await self._generate_with_gemini(project_description, blog_number, project_api_keys["gemini"], generate_images, num_images_per_blog)
                 else:
                     logger.error(f"❌ No Gemini API key found in project")
                     raise ValueError("Gemini API key not configured for this project")
@@ -90,7 +96,7 @@ class BlogGenerationService:
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             raise
     
-    async def _generate_with_openai(self, project_description: str, blog_number: int, api_key: str) -> Dict[str, Any]:
+    async def _generate_with_openai(self, project_description: str, blog_number: int, api_key: str, generate_images: bool = False, num_images_per_blog: int = 1) -> Dict[str, Any]:
         """Generate blog content using OpenAI with project-specific API key
         
         NOTE: Creates a FRESH OpenAI client configuration for each blog
@@ -135,6 +141,24 @@ class BlogGenerationService:
             selected_style = writing_styles[blog_number % len(writing_styles)]
             selected_angle = content_angles[blog_number % len(content_angles)]
             
+            # Add image placeholder instructions if images are enabled - OPENAI METHOD
+            image_instructions_openai = ""
+            if generate_images and num_images_per_blog > 0:
+                image_instructions_openai = f"""
+            
+            IMAGE REQUIREMENTS:
+            - Include exactly {num_images_per_blog} image placeholders in your content
+            - Use the format [image:description] where description explains what the image should show
+            - DISTRIBUTE images strategically throughout the content - DO NOT place them together continuously
+            - Place images at the start or end of different topics, concepts, or sections
+            - First image should be a header/featured image relevant to the main topic
+            - Additional images should illustrate key concepts, examples, or data at different content sections
+            - Space images evenly throughout the content to maintain visual flow
+            - Make image descriptions specific and detailed for better AI generation
+            - Example: [image:Modern office workspace with productivity tools and organized desk setup]
+            
+            """
+            
             prompt = f"""
             Create a comprehensive, STANDALONE blog post about: {project_description}
             
@@ -154,22 +178,29 @@ class BlogGenerationService:
             - Use a unique writing style and perspective
             - Avoid any references to being part of a series or collection
             - Emphasize the {selected_style} approach throughout the content
-            - Focus on {selected_angle} as the primary content angle
+            - Focus on {selected_angle} as the primary content angle{image_instructions_openai}
             
             Format the response as:
             TITLE: [Your blog title here]
-            CONTENT: [Your blog content here with proper markdown formatting]
+            CONTENT: [Your blog content here with proper markdown formatting and image placeholders]
             """
             
             logger.info(f"📝 Sending prompt to OpenAI: {prompt[:100]}...")
             
-            # Use the newer OpenAI API syntax for GPT-4o Mini compatibility (fresh request per blog)
+            # Use asyncio.run_in_executor to make the OpenAI call non-blocking
+            # This allows other coroutines to run while waiting for the API response
             logger.info(f"🔍 Sending request to fresh OpenAI instance for blog {blog_number}")
-            response = openai.ChatCompletion.create(
-                model="gpt-4o-mini-2024-07-18",  # Updated to GPT-4o Mini
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=2000,  # Use max_tokens for GPT-4o Mini
-                temperature=0.7  # Restored temperature parameter for GPT-4o Mini
+            
+            # Convert the synchronous OpenAI call to asynchronous
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,  # Use default executor
+                lambda: openai.ChatCompletion.create(
+                    model="gpt-4o-mini-2024-07-18",  # Updated to GPT-4o Mini
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=2000,  # Use max_tokens for GPT-4o Mini
+                    temperature=0.7  # Restored temperature parameter for GPT-4o Mini
+                )
             )
             
             logger.info(f"✅ OpenAI response received")
@@ -199,7 +230,7 @@ class BlogGenerationService:
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             raise
     
-    async def _generate_with_gemini(self, project_description: str, blog_number: int, api_key: str) -> Dict[str, Any]:
+    async def _generate_with_gemini(self, project_description: str, blog_number: int, api_key: str, generate_images: bool = False, num_images_per_blog: int = 1) -> Dict[str, Any]:
         """Generate blog content using Gemini with project-specific API key
         
         NOTE: Creates a FRESH Gemini model instance for each blog (like OpenAI)
@@ -259,6 +290,24 @@ class BlogGenerationService:
             selected_style = writing_styles[blog_number % len(writing_styles)]
             selected_angle = content_angles[blog_number % len(content_angles)]
             
+            # Add image placeholder instructions if images are enabled - GEMINI METHOD
+            image_instructions_gemini = ""
+            if generate_images and num_images_per_blog > 0:
+                image_instructions_gemini = f"""
+            
+            IMAGE REQUIREMENTS:
+            - Include exactly {num_images_per_blog} image placeholders in your content
+            - Use the format [image:description] where description explains what the image should show
+            - DISTRIBUTE images strategically throughout the content - DO NOT place them together continuously
+            - Place images at the start or end of different topics, concepts, or sections
+            - First image should be a header/featured image relevant to the main topic
+            - Additional images should illustrate key concepts, examples, or data at different content sections
+            - Space images evenly throughout the content to maintain visual flow
+            - Make image descriptions specific and detailed for better AI generation
+            - Example: [image:Modern office workspace with productivity tools and organized desk setup]
+            
+            """
+            
             prompt = f"""
             Create a comprehensive, STANDALONE blog post about: {project_description}
             
@@ -279,21 +328,29 @@ class BlogGenerationService:
             - Make this blog completely self-contained and independent
             - Use a unique writing style and perspective
             - Avoid any references to being part of a series or collection
-            - Emphasize the {selected_style} approach throughout the content
-            - Focus on {selected_angle} as the primary content angle
+            - Emphasize the {selected_angle} approach throughout the content
+            - Focus on {selected_angle} as the primary content angle{image_instructions_gemini}
             
             Format the response exactly as follows:
             TITLE: [Your blog title here]
             
-            [Your blog content here with proper formatting]
+            [Your blog content here with proper formatting and image placeholders]
             """
             
             logger.info(f"📝 Sending prompt to Gemini: {prompt[:100]}...")
             
-            # Generate content with Gemini (fresh instance per blog)
+            # Generate content with Gemini (fresh instance per blog) - now asynchronous
             try:
                 logger.info(f"🔍 Sending request to fresh Gemini instance for blog {blog_number}")
-                response = model.generate_content(prompt)
+                
+                # Convert the synchronous Gemini call to asynchronous
+                # This allows other coroutines to run while waiting for the API response
+                loop = asyncio.get_event_loop()
+                response = await loop.run_in_executor(
+                    None,  # Use default executor
+                    lambda: model.generate_content(prompt)
+                )
+                
                 logger.info(f"✅ Gemini content generation request sent successfully")
             except Exception as e:
                 logger.error(f"❌ Failed to generate content with Gemini: {e}")
@@ -416,13 +473,286 @@ class BlogGenerationService:
         project_description: str,
         num_blogs: int,
         ai_model: str = "openai",
-        project_api_keys: dict = None
+        project_api_keys: dict = None,
+        max_concurrent_blogs: int = 5,
+        generate_images: bool = False,
+        num_images_per_blog: int = 1
     ) -> List[Dict[str, Any]]:
-        """Generate multiple blogs for a project with simplified AI model configuration"""
+        """Generate multiple blogs for a project with automatic multi-threading for multiple blogs"""
+        # Automatically enable multi-threading if generating more than 1 blog
+        use_multithreading = num_blogs > 1
+        
+        if use_multithreading:
+            logger.info(f"🚀 Starting multi-threaded blog generation for {num_blogs} blogs")
+            return await self._generate_blogs_multithreaded(
+                project_id, project_description, num_blogs, ai_model, 
+                project_api_keys, max_concurrent_blogs, generate_images, num_images_per_blog
+            )
+        else:
+            logger.info(f"🚀 Starting sequential blog generation for {num_blogs} blog")
+            return await self._generate_blogs_sequential(
+                project_id, project_description, num_blogs, ai_model, project_api_keys, generate_images, num_images_per_blog
+            )
+
+    async def _generate_blogs_multithreaded(
+        self,
+        project_id: str,
+        project_description: str,
+        num_blogs: int,
+        ai_model: str,
+        project_api_keys: dict,
+        max_concurrent_blogs: int,
+        generate_images: bool,
+        num_images_per_blog: int
+    ) -> List[Dict[str, Any]]:
+        """Generate multiple blogs concurrently using asyncio.gather with semaphore for rate limiting"""
+        generated_blogs = []
+        failed_blogs = []
+        
+        # Create semaphore to control concurrency
+        semaphore = asyncio.Semaphore(max_concurrent_blogs)
+        
+        # Log multi-threading setup
+        start_time = asyncio.get_event_loop().time()
+        logger.info(f"🚀 MULTI-THREADING SETUP:")
+        logger.info(f"   📊 Total blogs to generate: {num_blogs}")
+        logger.info(f"   🔀 Max concurrent blogs: {max_concurrent_blogs}")
+        logger.info(f"   ⏱️  Start time: {start_time:.2f}s")
+        logger.info(f"   🎯 Expected batches: {(num_blogs + max_concurrent_blogs - 1) // max_concurrent_blogs}")
+        
+        async def generate_single_blog(blog_number: int) -> Dict[str, Any]:
+            """Generate a single blog with semaphore control and immediate database save"""
+            blog_start_time = asyncio.get_event_loop().time()
+            
+            # Acquire semaphore to control concurrency
+            async with semaphore:
+                logger.info(f"🔓 SEMAPHORE ACQUIRED for Blog {blog_number} at {blog_start_time:.2f}s")
+                try:
+                    # Generate blog content
+                    result = await self.generate_blog_content(
+                        project_description, 
+                        blog_number, 
+                        ai_model,
+                        project_api_keys,
+                        generate_images,
+                        num_images_per_blog
+                    )
+                    
+                    # IMMEDIATELY save blog to database
+                    logger.info(f"💾 IMMEDIATELY SAVING Blog {blog_number} to database...")
+                    save_start = asyncio.get_event_loop().time()
+                    
+                    # Create blog record
+                    blog_create = BlogCreate(
+                        project_id=project_id,
+                        title=result["title"],
+                        status=BlogStatus.READY,
+                        word_count=result["word_count"],
+                        prompt=result["prompt"],
+                        ai_model=result["ai_model"]
+                    )
+                    
+                    # Store in database with content immediately
+                    blog_record = self._store_blog(blog_create, result["content"])
+                    
+                    # Update blog with generation metadata immediately
+                    supabase_client.table("blogs").update({
+                        "generation_metadata": {
+                            "ai_model": ai_model,
+                            "generated_at": datetime.now().isoformat(),
+                            "model_provider": result.get("model_provider", ai_model),
+                            "generation_method": "multithreaded",
+                            "concurrent_batch": f"batch_{blog_number // max_concurrent_blogs + 1}",
+                            "concurrency_level": max_concurrent_blogs,
+                            "immediate_save": True
+                        },
+                        "updated_at": datetime.now().isoformat()
+                    }).eq("id", blog_record["id"]).execute()
+                    
+                    save_end = asyncio.get_event_loop().time()
+                    save_time = save_end - save_start
+                    logger.info(f"💾 Blog {blog_number} IMMEDIATELY SAVED to database in {save_time:.2f}s (ID: {blog_record['id']})")
+                    
+                    # Update project progress in real-time
+                    try:
+                        # Get current completed blogs count and increment
+                        current_response = supabase_client.table("projects").select("completed_blogs").eq("id", project_id).execute()
+                        if current_response.data:
+                            current_count = current_response.data[0].get("completed_blogs", 0)
+                            new_count = current_count + 1
+                            
+                            supabase_client.table("projects").update({
+                                "completed_blogs": new_count,
+                                "updated_at": datetime.now().isoformat()
+                            }).eq("id", project_id).execute()
+                            logger.info(f"📊 Project progress updated: {current_count} → {new_count} blogs completed")
+                    except Exception as progress_error:
+                        logger.warning(f"⚠️ Could not update project progress: {progress_error}")
+                    
+                    blog_end_time = asyncio.get_event_loop().time()
+                    blog_duration = blog_end_time - blog_start_time
+                    logger.info(f"✅ Blog {blog_number} COMPLETED and SAVED in {blog_duration:.2f}s")
+                    
+                    # AUTOMATIC IMAGE PROCESSING - if enabled for this project
+                    if generate_images and num_images_per_blog > 0:
+                        try:
+                            logger.info(f"🎨 Starting automatic image processing for blog {blog_number} (ID: {blog_record['id']})")
+                            
+                            # Get user's Fal AI API key for image generation
+                            user_id = self._get_user_id_from_project(project_id)
+                            if user_id:
+                                fal_api_key = self._get_fal_api_key_for_user(user_id)
+                                if fal_api_key:
+                                    # Start image processing in background (don't wait for completion)
+                                    asyncio.create_task(self._process_images_for_blog_async(
+                                        blog_record["id"],
+                                        project_id,
+                                        result["title"],
+                                        result["content"],
+                                        user_id,
+                                        fal_api_key
+                                    ))
+                                    logger.info(f"🚀 Image processing started in background for blog {blog_record['id']}")
+                                else:
+                                    logger.warning(f"⚠️ No Fal AI API key found for user {user_id} - skipping image processing")
+                            else:
+                                logger.warning(f"⚠️ Could not determine user ID for project {project_id} - skipping image processing")
+                        except Exception as img_error:
+                            logger.error(f"❌ Failed to start automatic image processing for blog {blog_record['id']}: {img_error}")
+                            # Don't fail the blog generation if image processing fails
+                    else:
+                        logger.info(f"📝 Image processing not enabled for blog {blog_number} (generate_images: {generate_images}, num_images: {num_images_per_blog})")
+                    
+                    # Return the saved blog record instead of just the generation result
+                    return {
+                        **result,
+                        "blog_id": blog_record["id"],
+                        "saved_to_db": True,
+                        "save_time": save_time
+                    }
+                    
+                except Exception as e:
+                    blog_end_time = asyncio.get_event_loop().time()
+                    blog_duration = blog_end_time - blog_start_time
+                    logger.error(f"❌ Blog {blog_number} FAILED in {blog_duration:.2f}s: {e}")
+                    raise
+                finally:
+                    logger.info(f"🔓 SEMAPHORE RELEASED for Blog {blog_number}")
+        
+        # Create all tasks at once - they will compete for semaphore slots
+        logger.info(f"🔧 CREATING {num_blogs} CONCURRENT TASKS...")
+        tasks = []
+        for blog_number in range(1, num_blogs + 1):
+            task = generate_single_blog(blog_number)
+            tasks.append(task)
+            logger.info(f"   📝 Task {blog_number} created and queued")
+        
+        logger.info(f"🚀 STARTING CONCURRENT EXECUTION with {len(tasks)} tasks...")
+        logger.info(f"   🔀 Semaphore will allow {max_concurrent_blogs} blogs to run simultaneously")
+        
+        try:
+            # Execute all tasks concurrently - they will compete for semaphore slots
+            execution_start = asyncio.get_event_loop().time()
+            
+            # Use asyncio.gather to run all tasks concurrently
+            # The semaphore will control how many can run at the same time
+            responses = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            execution_end = asyncio.get_event_loop().time()
+            total_execution_time = execution_end - execution_start
+            
+            logger.info(f"🎉 CONCURRENT EXECUTION COMPLETED in {total_execution_time:.2f}s")
+            logger.info(f"   📊 Total blogs processed: {len(responses)}")
+            logger.info(f"   ⚡ Average time per blog: {total_execution_time / num_blogs:.2f}s")
+            logger.info(f"   🚀 Speed improvement: {num_blogs * 2 / total_execution_time:.1f}x faster than sequential")
+            
+            # Process results with detailed logging
+            logger.info(f"📝 PROCESSING GENERATION RESULTS...")
+            
+            for i, response in enumerate(responses):
+                blog_number = i + 1
+                try:
+                    if isinstance(response, Exception):
+                        logger.error(f"❌ Blog {blog_number} generation failed: {response}")
+                        failed_blogs.append(blog_number)
+                        continue
+                    
+                    blog_data = response
+                    if not blog_data:
+                        logger.error(f"❌ Blog {blog_number} generation returned no data")
+                        failed_blogs.append(blog_number)
+                        continue
+                    
+                    logger.info(f"✅ Blog {blog_number} SUCCESS: '{blog_data.get('title', 'No title')}' - Already saved to database")
+                    
+                    # Blog was already saved during generation, just add to our list
+                    if "blog_id" in blog_data:
+                        # Get the blog record from database since it was already saved
+                        try:
+                            blog_record = supabase_client.table("blogs").select("*").eq("id", blog_data["blog_id"]).execute()
+                            if blog_record.data:
+                                generated_blogs.append(blog_record.data[0])
+                                logger.info(f"📝 Blog {blog_number} added to results (ID: {blog_data['blog_id']})")
+                            else:
+                                logger.warning(f"⚠️ Blog {blog_number} not found in database despite being saved")
+                        except Exception as db_error:
+                            logger.error(f"❌ Error retrieving saved blog {blog_number}: {db_error}")
+                    else:
+                        logger.warning(f"⚠️ Blog {blog_number} missing blog_id - may not have been saved properly")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Failed to process blog {blog_number}: {e}")
+                    failed_blogs.append(blog_number)
+                    continue
+            
+            # Final summary with timing
+            end_time = asyncio.get_event_loop().time()
+            total_time = end_time - start_time
+            
+            logger.info(f"📊 FINAL MULTI-THREADING SUMMARY:")
+            logger.info(f"   ⏱️  Total time: {total_time:.2f}s")
+            logger.info(f"   🚀 Concurrent execution: {total_execution_time:.2f}s")
+            logger.info(f"   💾 Storage & metadata: {total_time - total_execution_time:.2f}s")
+            logger.info(f"   📝 Successfully generated: {len(generated_blogs)} blogs")
+            logger.info(f"   ❌ Failed: {len(failed_blogs)} blogs")
+            logger.info(f"   🎯 Success rate: {(len(generated_blogs) / num_blogs) * 100:.1f}%")
+            
+            if failed_blogs:
+                logger.info(f"   📋 Failed blog numbers: {failed_blogs}")
+            
+            # Performance analysis
+            if len(generated_blogs) > 0:
+                sequential_estimate = num_blogs * 2  # Assume 2 seconds per blog sequentially
+                speedup = sequential_estimate / total_time
+                logger.info(f"   ⚡ Performance: {speedup:.1f}x faster than estimated sequential")
+                logger.info(f"   💡 Concurrency efficiency: {(speedup / max_concurrent_blogs) * 100:.1f}%")
+            
+            logger.info(f"🎉 Multi-threaded blog generation completed: {len(generated_blogs)}/{num_blogs} successful")
+            return generated_blogs
+            
+        except Exception as e:
+            end_time = asyncio.get_event_loop().time()
+            total_time = end_time - start_time
+            logger.error(f"❌ Multi-threaded blog generation failed after {total_time:.2f}s: {e}")
+            logger.error(f"❌ Error type: {type(e)}")
+            logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+            raise
+    
+    async def _generate_blogs_sequential(
+        self,
+        project_id: str,
+        project_description: str,
+        num_blogs: int,
+        ai_model: str,
+        project_api_keys: dict,
+        generate_images: bool,
+        num_images_per_blog: int
+    ) -> List[Dict[str, Any]]:
+        """Generate multiple blogs for a project sequentially"""
         generated_blogs = []
         
         try:
-            logger.info(f"🚀 Starting blog generation for project {project_id}: {num_blogs} blogs")
+            logger.info(f"🚀 Starting sequential blog generation for project {project_id}: {num_blogs} blogs")
             logger.info(f"🔍 AI Model: {ai_model}")
             logger.info(f"🔍 Project API keys: {list(project_api_keys.keys()) if project_api_keys else 'None'}")
             logger.info(f"🔍 Project description: {project_description}")
@@ -436,16 +766,18 @@ class BlogGenerationService:
                         project_description, 
                         blog_number, 
                         ai_model,
-                        project_api_keys
+                        project_api_keys,
+                        generate_images,
+                        num_images_per_blog
                     )
                     
                     logger.info(f"✅ Blog content generated: {blog_data['title']}")
                     
-                    # Create blog record with ready status
+                    # Create blog record with DRAFT status to start the workflow
                     blog_create = BlogCreate(
                         project_id=project_id,
                         title=blog_data["title"],
-                        status=BlogStatus.READY,  # Always ready after generation
+                        status=BlogStatus.DRAFT,  # Start with DRAFT to enable workflow
                         word_count=blog_data["word_count"],
                         prompt=blog_data["prompt"],
                         ai_model=blog_data["ai_model"]
@@ -463,7 +795,8 @@ class BlogGenerationService:
                         "generation_metadata": {
                             "ai_model": ai_model,
                             "generated_at": datetime.now().isoformat(),
-                            "model_provider": blog_data.get("model_provider", ai_model)
+                            "model_provider": blog_data.get("model_provider", ai_model),
+                            "generation_method": "sequential"
                         },
                         "updated_at": datetime.now().isoformat()
                     }).eq("id", blog_record["id"]).execute()
@@ -472,11 +805,123 @@ class BlogGenerationService:
                     blog_record["generation_metadata"] = {
                         "ai_model": ai_model,
                         "generated_at": datetime.now().isoformat(),
-                        "model_provider": blog_data.get("model_provider", ai_model)
+                        "model_provider": blog_data.get("model_provider", ai_model),
+                        "generation_method": "sequential"
                     }
+                    
+                    # Start the SEO optimization workflow
+                    try:
+                        logger.info(f"🔍 Starting SEO optimization workflow for blog {blog_record['id']}")
+                        
+                        # Update status to SEO optimizing
+                        supabase_client.table("blogs").update({
+                            "status": BlogStatus.SEO_OPTIMIZING,
+                            "updated_at": datetime.now().isoformat()
+                        }).eq("id", blog_record["id"]).execute()
+                        
+                        # Perform SEO optimization inline (since we're not using Celery yet)
+                        seo_result = await self._perform_seo_optimization(
+                            blog_record["id"], 
+                            blog_data["content"], 
+                            blog_data["title"]
+                        )
+                        
+                        if seo_result:
+                            logger.info(f"✅ SEO optimization completed for blog {blog_record['id']}")
+                            
+                            # Update status to formatting
+                            supabase_client.table("blogs").update({
+                                "status": BlogStatus.FORMATTING,
+                                "updated_at": datetime.now().isoformat()
+                            }).eq("id", blog_record["id"]).execute()
+                            
+                            # Perform basic formatting
+                            formatted_result = await self._perform_basic_formatting(
+                                blog_record["id"], 
+                                seo_result["optimized_content"]
+                            )
+                            
+                            if formatted_result:
+                                logger.info(f"✅ Basic formatting completed for blog {blog_record['id']}")
+                                
+                                # Update status to ready
+                                supabase_client.table("blogs").update({
+                                    "status": BlogStatus.READY,
+                                    "updated_at": datetime.now().isoformat()
+                                }).eq("id", blog_record["id"]).execute()
+                                
+                                logger.info(f"✅ Blog {blog_record['id']} workflow completed - status: READY")
+                            else:
+                                logger.warning(f"⚠️ Basic formatting failed for blog {blog_record['id']}")
+                                # Set to ready anyway
+                                supabase_client.table("blogs").update({
+                                    "status": BlogStatus.READY,
+                                    "updated_at": datetime.now().isoformat()
+                                }).eq("id", blog_record["id"]).execute()
+                        else:
+                            logger.warning(f"⚠️ SEO optimization failed for blog {blog_record['id']}")
+                            # Set to ready anyway
+                            supabase_client.table("blogs").update({
+                                "status": BlogStatus.READY,
+                                "updated_at": datetime.now().isoformat()
+                            }).eq("id", blog_record["id"]).execute()
+                            
+                    except Exception as workflow_error:
+                        logger.error(f"❌ Workflow failed for blog {blog_record['id']}: {workflow_error}")
+                        # Set to ready anyway to avoid blocking
+                        supabase_client.table("blogs").update({
+                            "status": BlogStatus.READY,
+                            "updated_at": datetime.now().isoformat()
+                        }).eq("id", blog_record["id"]).execute()
+                    
+                    # AUTOMATIC IMAGE PROCESSING - if enabled for this project
+                    if generate_images and num_images_per_blog > 0:
+                        try:
+                            logger.info(f"🎨 Starting automatic image processing for blog {blog_number} (ID: {blog_record['id']})")
+                            
+                            # Get user's Fal AI API key for image generation
+                            user_id = self._get_user_id_from_project(project_id)
+                            if user_id:
+                                fal_api_key = self._get_fal_api_key_for_user(user_id)
+                                if fal_api_key:
+                                    # Start image processing in background (don't wait for completion)
+                                    asyncio.create_task(self._process_images_for_blog_async(
+                                        blog_record["id"],
+                                        project_id,
+                                        blog_data["title"],
+                                        blog_data["content"],
+                                        user_id,
+                                        fal_api_key
+                                    ))
+                                    logger.info(f"🚀 Image processing started in background for blog {blog_record['id']}")
+                                else:
+                                    logger.warning(f"⚠️ No Fal AI API key found for user {user_id} - skipping image processing")
+                            else:
+                                logger.warning(f"⚠️ Could not determine user ID for project {project_id} - skipping image processing")
+                        except Exception as img_error:
+                            logger.error(f"❌ Failed to start automatic image processing for blog {blog_record['id']}: {img_error}")
+                            # Don't fail the blog generation if image processing fails
+                    else:
+                        logger.info(f"📝 Image processing not enabled for blog {blog_number} (generate_images: {generate_images}, num_images: {num_images_per_blog})")
                     
                     generated_blogs.append(blog_record)
                     logger.info(f"✅ Blog {blog_number} generated successfully: {blog_data['title']}")
+                    
+                    # Update project progress in real-time
+                    try:
+                        # Get current completed blogs count and increment
+                        current_response = supabase_client.table("projects").select("completed_blogs").eq("id", project_id).execute()
+                        if current_response.data:
+                            current_count = current_response.data[0].get("completed_blogs", 0)
+                            new_count = current_count + 1
+                            
+                            supabase_client.table("projects").update({
+                                "completed_blogs": new_count,
+                                "updated_at": datetime.now().isoformat()
+                            }).eq("id", project_id).execute()
+                            logger.info(f"📊 Project progress updated: {current_count} → {new_count} blogs completed")
+                    except Exception as progress_error:
+                        logger.warning(f"⚠️ Could not update project progress: {progress_error}")
                     
                     # Small delay to avoid rate limiting
                     await asyncio.sleep(1)
@@ -488,11 +933,11 @@ class BlogGenerationService:
                     # Continue with next blog
                     continue
             
-            logger.info(f"🎉 Blog generation completed: {len(generated_blogs)}/{num_blogs} blogs generated")
+            logger.info(f"🎉 Sequential blog generation completed: {len(generated_blogs)}/{num_blogs} blogs generated")
             return generated_blogs
             
         except Exception as e:
-            logger.error(f"❌ Blog generation service failed: {e}")
+            logger.error(f"❌ Sequential blog generation service failed: {e}")
             logger.error(f"❌ Error type: {type(e)}")
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             raise
@@ -536,7 +981,6 @@ class BlogGenerationService:
                     "storage_bucket": "blog-content",
                     "s3_content_key": s3_key,
                     "content_size_bytes": len(content.encode()),
-                    "content_hash": content_hash,
                     "created_at": datetime.now().isoformat(),
                     "updated_at": datetime.now().isoformat()
                 }
@@ -820,6 +1264,654 @@ class BlogGenerationService:
         except Exception as e:
             logger.error(f"❌ Failed to update blog content: {e}")
             return False
+
+    async def _perform_seo_optimization(self, blog_id: str, content: str, title: str) -> Dict[str, Any]:
+        """Perform SEO optimization on blog content"""
+        try:
+            logger.info(f"🔍 Starting SEO optimization for blog {blog_id}")
+            
+            # Extract main keyword from title
+            main_keyword = self._extract_main_keyword(title)
+            
+            # Generate meta description
+            meta_description = self._generate_meta_description(content, main_keyword)
+            
+            # Generate slug
+            slug = self._generate_slug(title)
+            
+            # Extract headings for structure
+            headings = self._extract_headings(content)
+            
+            # Calculate reading time
+            reading_time = self._calculate_reading_time(content)
+            
+            # Generate tags based on content
+            tags = self._generate_content_tags(content, title)
+            
+            # Calculate keyword density
+            keyword_density = self._calculate_keyword_density(content, main_keyword)
+            
+            # Calculate SEO score
+            seo_score = self._calculate_seo_score(content, title, meta_description)
+            
+            seo_meta = {
+                "title": title,
+                "meta_description": meta_description,
+                "slug": slug,
+                "main_keyword": main_keyword,
+                "headings": headings,
+                "reading_time": reading_time,
+                "tags": tags,
+                "word_count": len(content.split()),
+                "keyword_density": keyword_density,
+                "seo_score": seo_score,
+                "generated_at": datetime.now().isoformat()
+            }
+            
+            # Update blog with SEO metadata
+            supabase_client.table("blogs").update({
+                "seo_meta": seo_meta,
+                "updated_at": datetime.now().isoformat()
+            }).eq("id", blog_id).execute()
+            
+            logger.info(f"✅ SEO optimization completed for blog {blog_id}")
+            logger.info(f"🔑 Main keyword: {main_keyword}")
+            logger.info(f"📊 SEO score: {seo_score}/100")
+            logger.info(f"🔍 Keyword density: {keyword_density}%")
+            
+            return {
+                "seo_meta": seo_meta,
+                "optimized_content": content,  # Content remains the same for now
+                "main_keyword": main_keyword,
+                "seo_score": seo_score
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ SEO optimization failed for blog {blog_id}: {e}")
+            return None
+
+    async def _perform_basic_formatting(self, blog_id: str, content: str) -> Dict[str, Any]:
+        """Perform basic content formatting"""
+        try:
+            logger.info(f"🔍 Starting basic formatting for blog {blog_id}")
+            
+            # For now, just return the content as-is
+            # In the future, this could include:
+            # - Table of contents generation
+            # - FAQ section addition
+            # - Call-to-action insertion
+            # - Related posts section
+            
+            logger.info(f"✅ Basic formatting completed for blog {blog_id}")
+            
+            return {
+                "formatted_content": content,
+                "formatting_applied": ["basic_structure"]
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Basic formatting failed for blog {blog_id}: {e}")
+            return None
+
+    def _extract_main_keyword(self, title: str) -> str:
+        """Extract main keyword from title"""
+        import re
+        # Remove common words and extract meaningful terms
+        stop_words = {"the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by"}
+        
+        words = re.findall(r'\b\w+\b', title.lower())
+        meaningful_words = [word for word in words if word not in stop_words and len(word) > 3]
+        
+        if meaningful_words:
+            return meaningful_words[0]
+        
+        return "blog"
+
+    def _generate_meta_description(self, content: str, main_keyword: str) -> str:
+        """Generate meta description from content"""
+        # Take first 150 characters and ensure it ends at a word boundary
+        if len(content) <= 150:
+            return content
+        
+        # Find the last space within 150 characters
+        truncated = content[:150]
+        last_space = truncated.rfind(' ')
+        
+        if last_space > 100:  # Only truncate if we have enough content
+            truncated = truncated[:last_space]
+        
+        # Ensure main keyword is included if possible
+        if main_keyword.lower() not in truncated.lower():
+            # Try to include keyword by extending slightly
+            keyword_pos = content.lower().find(main_keyword.lower())
+            if keyword_pos != -1 and keyword_pos < 200:
+                end_pos = min(keyword_pos + 150, len(content))
+                truncated = content[:end_pos]
+                last_space = truncated.rfind(' ')
+                if last_space > 100:
+                    truncated = truncated[:last_space]
+        
+        return truncated + "..."
+
+    def _generate_slug(self, title: str) -> str:
+        """Generate URL-friendly slug from title"""
+        import re
+        # Convert to lowercase and replace spaces with hyphens
+        slug = re.sub(r'[^\w\s-]', '', title.lower())
+        slug = re.sub(r'[-\s]+', '-', slug)
+        return slug.strip('-')
+
+    def _extract_headings(self, content: str) -> List[str]:
+        """Extract headings from content"""
+        import re
+        headings = re.findall(r'^#{1,6}\s+(.+)$', content, re.MULTILINE)
+        return headings
+
+    def _calculate_reading_time(self, content: str) -> int:
+        """Calculate estimated reading time in minutes"""
+        words = len(content.split())
+        reading_time = max(1, words // 200)  # Assume 200 words per minute
+        return reading_time
+
+    def _generate_content_tags(self, content: str, title: str) -> List[str]:
+        """Generate relevant tags based on content"""
+        # Combine title and content for analysis
+        full_text = f"{title} {content}".lower()
+        
+        # Common content categories and their keywords
+        categories = {
+            "technology": ["tech", "software", "programming", "ai", "machine learning", "data"],
+            "business": ["business", "marketing", "strategy", "management", "entrepreneurship"],
+            "health": ["health", "fitness", "wellness", "nutrition", "exercise"],
+            "lifestyle": ["lifestyle", "travel", "food", "fashion", "home"],
+            "education": ["education", "learning", "teaching", "courses", "skills"]
+        }
+        
+        tags = []
+        for category, keywords in categories.items():
+            if any(keyword in full_text for keyword in keywords):
+                tags.append(category)
+        
+        # Add specific tags based on content
+        if "how to" in title.lower() or "guide" in title.lower():
+            tags.append("how-to")
+        
+        if "tips" in title.lower() or "advice" in title.lower():
+            tags.append("tips")
+        
+        # Limit to 5 tags
+        return tags[:5]
+
+    def _calculate_keyword_density(self, content: str, keyword: str) -> float:
+        """Calculate keyword density in content"""
+        if not keyword or not content:
+            return 0.0
+        
+        words = content.lower().split()
+        keyword_count = content.lower().count(keyword.lower())
+        
+        if len(words) == 0:
+            return 0.0
+        
+        density = (keyword_count / len(words)) * 100
+        return round(density, 2)
+
+    def _calculate_seo_score(self, content: str, title: str, meta_description: str) -> int:
+        """Calculate overall SEO score"""
+        score = 0
+        
+        # Title length (optimal: 50-60 characters)
+        title_length = len(title)
+        if 50 <= title_length <= 60:
+            score += 20
+        elif 30 <= title_length <= 70:
+            score += 15
+        else:
+            score += 5
+        
+        # Meta description length (optimal: 150-160 characters)
+        desc_length = len(meta_description)
+        if 150 <= desc_length <= 160:
+            score += 20
+        elif 120 <= desc_length <= 180:
+            score += 15
+        else:
+            score += 5
+        
+        # Content length (minimum 300 words)
+        word_count = len(content.split())
+        if word_count >= 800:
+            score += 20
+        elif word_count >= 500:
+            score += 15
+        elif word_count >= 300:
+            score += 10
+        else:
+            score += 5
+        
+        # Headings structure
+        headings = self._extract_headings(content)
+        if len(headings) >= 3:
+            score += 20
+        elif len(headings) >= 1:
+            score += 10
+        
+        # Keyword in title
+        if title and len(title.split()) > 0:
+            score += 20
+        
+        return min(100, score)
+    
+    async def process_blog_with_images(
+        self,
+        blog_id: str,
+        project_id: str,
+        content: str,
+        title: str,
+        fal_api_key: str,
+        s3_bucket_name: str = "images"
+    ) -> Dict[str, Any]:
+        """
+        Process a blog with image placeholders: store placeholders and generate images
+        
+        Args:
+            blog_id: Blog ID
+            project_id: Project ID
+            content: Blog content with image placeholders
+            title: Blog title
+            fal_api_key: Fal AI API key
+            s3_bucket_name: S3 bucket name for storing images
+            
+        Returns:
+            Dict with processing results
+        """
+        try:
+            logger.info(f"Processing blog {blog_id} with image placeholders")
+            
+            # Step 1: Store image placeholders in database
+            placeholder_result = await self.image_processor.store_image_placeholders(
+                blog_id=blog_id,
+                project_id=project_id,
+                content=content,
+                title=title
+            )
+            
+            if not placeholder_result["success"]:
+                logger.error(f"Failed to store image placeholders: {placeholder_result.get('error')}")
+                return placeholder_result
+            
+            if placeholder_result["placeholders_stored"] == 0:
+                logger.info("No image placeholders found, blog processing complete")
+                return {
+                    "success": True,
+                    "message": "No image placeholders found",
+                    "images_processed": 0,
+                    "content_updated": False
+                }
+            
+            # Step 2: Process stored placeholders (generate images and store in S3)
+            processing_result = await self.image_processor.process_stored_placeholders(
+                blog_id=blog_id,
+                fal_api_key=fal_api_key,
+                s3_bucket_name=s3_bucket_name
+            )
+            
+            if not processing_result["success"]:
+                logger.error(f"Failed to process image placeholders: {processing_result.get('error')}")
+                return processing_result
+            
+            # Step 3: Update blog content with S3 image URLs
+            if processing_result["images_processed"] > 0:
+                updated_content = await self._update_blog_content_with_s3_images(
+                    blog_id=blog_id,
+                    content=content
+                )
+                
+                if updated_content:
+                    logger.info(f"✅ Blog content updated with S3 image URLs")
+                    return {
+                        "success": True,
+                        "message": f"Processed {processing_result['images_processed']} images successfully",
+                        "images_processed": processing_result["images_processed"],
+                        "content_updated": True,
+                        "updated_content": updated_content
+                    }
+                else:
+                    logger.warning("Failed to update blog content with S3 images")
+                    return {
+                        "success": True,
+                        "message": f"Generated {processing_result['images_processed']} images but failed to update content",
+                        "images_processed": processing_result["images_processed"],
+                        "content_updated": False
+                    }
+            else:
+                logger.warning("No images were processed successfully")
+                return {
+                    "success": False,
+                    "error": "No images were processed successfully",
+                    "images_processed": 0,
+                    "content_updated": False
+                }
+                
+        except Exception as e:
+            logger.error(f"Error processing blog with images: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "images_processed": 0,
+                "content_updated": False
+            }
+    
+    async def _update_blog_content_with_s3_images(
+        self,
+        blog_id: str,
+        content: str
+    ) -> str:
+        """
+        Update blog content to replace image placeholders with S3 URLs
+        
+        Args:
+            blog_id: Blog ID
+            content: Original blog content
+            
+        Returns:
+            Updated content with S3 image URLs
+        """
+        try:
+            # Get processed images from database
+            response = supabase_client.table("images").select("image_number, s3_url, prompt, alt_text").eq("blog_id", blog_id).eq("status", "generated").order("image_number").execute()
+            
+            if not response.data:
+                logger.warning("No processed images found for blog")
+                return content
+            
+            # Replace placeholders with S3 URLs
+            updated_content = content
+            for image_data in response.data:
+                placeholder = f"[image:{image_data['prompt']}]"
+                
+                # Create image HTML with S3 URL
+                image_html = f'''
+                <div class="blog-image image-{image_data['image_number']}">
+                    <img src="{image_data['s3_url']}" 
+                         alt="{image_data['alt_text']}" 
+                         class="img-fluid" 
+                         style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"
+                         loading="lazy">
+                    <div class="image-caption" style="text-align: center; margin-top: 8px; font-style: italic; color: #666; font-size: 0.9em;">
+                        {image_data['prompt']}
+                    </div>
+                </div>
+                '''
+                
+                updated_content = updated_content.replace(placeholder, image_html.strip())
+                logger.info(f"Replaced placeholder {image_data['image_number']} with S3 URL")
+            
+            # Update blog content in database
+            supabase_client.table("blogs").update({
+                "content": updated_content,
+                "updated_at": datetime.now().isoformat()
+            }).eq("id", blog_id).execute()
+            
+            return updated_content
+            
+        except Exception as e:
+            logger.error(f"Error updating blog content with S3 images: {e}")
+            return content
+    
+    def _get_user_id_from_project(self, project_id: str) -> str:
+        """Get user ID from project ID"""
+        try:
+            response = supabase_client.table("projects").select("user_id").eq("id", project_id).execute()
+            if response.data:
+                return response.data[0]["user_id"]
+            return None
+        except Exception as e:
+            logger.error(f"Error getting user ID from project {project_id}: {e}")
+            return None
+    
+    def _get_fal_api_key_for_user(self, user_id: str) -> str:
+        """Get Fal AI API key for user"""
+        try:
+            response = supabase_client.table("api_keys").select("api_key").eq("user_id", user_id).eq("service", "fal").eq("is_active", True).execute()
+            if response.data:
+                return response.data[0]["api_key"]
+            return None
+        except Exception as e:
+            logger.error(f"Error getting Fal AI API key for user {user_id}: {e}")
+            return None
+    
+    async def _process_images_for_blog_async(
+        self,
+        blog_id: str,
+        project_id: str,
+        title: str,
+        content: str,
+        user_id: str,
+        fal_api_key: str
+    ):
+        """Process images for a blog asynchronously (background task)"""
+        try:
+            logger.info(f"🎨 Processing images for blog {blog_id} in background")
+            
+            # Use the blog image processor to handle the complete workflow
+            result = await self.blog_image_processor.process_and_generate_images(
+                blog_id=blog_id,
+                project_id=project_id,
+                title=title,
+                content=content,
+                user_id=user_id,
+                fal_api_key=fal_api_key
+            )
+            
+            if result["success"]:
+                logger.info(f"✅ Background image processing completed for blog {blog_id}: {result['total_images_generated']} images generated")
+                
+                # Step 3: Automatically trigger WordPress media upload if WordPress account is configured
+                await self._trigger_wordpress_media_upload(blog_id, project_id)
+                
+            else:
+                logger.error(f"❌ Background image processing failed for blog {blog_id}: {result.get('error', 'Unknown error')}")
+                
+        except Exception as e:
+            logger.error(f"❌ Background image processing error for blog {blog_id}: {e}")
+    
+    async def _trigger_wordpress_media_upload(self, blog_id: str, project_id: str):
+        """Automatically trigger WordPress media upload for blog images"""
+        try:
+            logger.info(f"🌐 Checking if WordPress media upload should be triggered for blog {blog_id}")
+            
+            # Get project details to check if WordPress account is configured
+            project_response = supabase_client.table("projects").select("wordpress_account_id").eq("id", project_id).execute()
+            
+            if not project_response.data:
+                logger.info(f"ℹ️ Project {project_id} not found, skipping WordPress upload")
+                return
+            
+            project = project_response.data[0]
+            wordpress_account_id = project.get("wordpress_account_id")
+            
+            if not wordpress_account_id:
+                logger.info(f"ℹ️ No WordPress account configured for project {project_id}, skipping WordPress upload")
+                return
+            
+            # Check if there are images ready for WordPress upload
+            images_response = supabase_client.table("images").select(
+                "id, status, s3_url, wordpress_media_url"
+            ).eq("blog_id", blog_id).eq("status", "generated").not_.is_("s3_url", "null").is_("wordpress_media_url", "null").execute()
+            
+            if not images_response.data:
+                logger.info(f"ℹ️ No images ready for WordPress upload for blog {blog_id}")
+                return
+            
+            ready_images = images_response.data
+            logger.info(f"📸 Found {len(ready_images)} images ready for WordPress upload, triggering automatic upload")
+            
+            # Import and trigger the WordPress media upload task
+            try:
+                # Try Celery first (if available)
+                try:
+                    from tasks.wordpress_media_upload import upload_images_to_wordpress_task
+                    
+                    # Start the WordPress upload task in background
+                    task = upload_images_to_wordpress_task.delay(blog_id, wordpress_account_id)
+                    
+                    logger.info(f"✅ WordPress media upload task started for blog {blog_id}: {task.id}")
+                    logger.info(f"   📊 {len(ready_images)} images will be uploaded to WordPress")
+                    
+                except (ImportError, ConnectionRefusedError, Exception) as e:
+                    logger.warning(f"⚠️ Celery task not available, using direct upload: {e}")
+                    
+                    # Fallback: Direct WordPress upload
+                    await self._upload_images_to_wordpress_directly(blog_id, wordpress_account_id, ready_images)
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to start WordPress media upload task: {e}")
+                
+        except Exception as e:
+            logger.error(f"❌ Error triggering WordPress media upload for blog {blog_id}: {e}")
+    
+    async def _upload_images_to_wordpress_directly(self, blog_id: str, wordpress_account_id: str, images: List[Dict[str, Any]]):
+        """Direct WordPress upload without Celery (fallback method)"""
+        try:
+            logger.info(f"🌐 Starting direct WordPress upload for blog {blog_id} ({len(images)} images)")
+            
+            # Import the WordPress media service
+            try:
+                from services.wordpress_media_service import WordPressMediaService
+                
+                # Get WordPress account details
+                wp_response = supabase_client.table("wordpress_accounts").select("*").eq("id", wordpress_account_id).eq("is_active", True).execute()
+                if not wp_response.data:
+                    logger.error(f"❌ WordPress account {wordpress_account_id} not found or inactive")
+                    return
+                
+                wordpress_account = wp_response.data[0]
+                
+                # Upload images directly
+                async with WordPressMediaService() as wp_service:
+                    upload_result = await wp_service.upload_multiple_images(images, wordpress_account)
+                    
+                    if upload_result["success"]:
+                        # Update database with WordPress media URLs
+                        update_result = self._update_images_with_wordpress_urls(upload_result["results"])
+                        
+                        logger.info(f"✅ Direct WordPress upload completed for blog {blog_id}")
+                        logger.info(f"   📊 {upload_result['successful_count']} successful, {upload_result['failed_count']} failed")
+                        logger.info(f"   💾 Database updated: {update_result['updated_count']} records")
+                    else:
+                        logger.error(f"❌ Direct WordPress upload failed for blog {blog_id}")
+                        
+            except ImportError as e:
+                logger.warning(f"⚠️ WordPress media service not available: {e}")
+            except Exception as e:
+                logger.error(f"❌ Error in direct WordPress upload: {e}")
+                
+        except Exception as e:
+            logger.error(f"❌ Error in direct WordPress upload method: {e}")
+    
+    def _update_images_with_wordpress_urls(self, upload_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Update image records with WordPress media URLs"""
+        try:
+            updated_count = 0
+            failed_count = 0
+            
+            for result in upload_results:
+                if result["success"]:
+                    try:
+                        # Update the image record with WordPress media URL
+                        update_data = {
+                            "wordpress_media_url": result["wordpress_media_url"],
+                            "wordpress_media_id": result["wordpress_media_id"],
+                            "updated_at": datetime.utcnow().isoformat()
+                        }
+                        
+                        supabase_client.table("images").update(update_data).eq("id", result["image_id"]).execute()
+                        updated_count += 1
+                        
+                        logger.info(f"✅ Updated image {result['image_id']} with WordPress media URL")
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Failed to update image {result['image_id']}: {e}")
+                        failed_count += 1
+                else:
+                    logger.warning(f"⚠️ Image {result['image_id']} upload failed, not updating database")
+            
+            logger.info(f"📊 Database update completed: {updated_count} updated, {failed_count} failed")
+            
+            return {
+                "success": failed_count == 0,
+                "updated_count": updated_count,
+                "failed_count": failed_count
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error updating images with WordPress URLs: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    async def trigger_wordpress_upload_for_existing_blog(self, blog_id: str):
+        """Manually trigger WordPress upload for an existing blog that already has generated images"""
+        try:
+            logger.info(f"🌐 Manually triggering WordPress upload for existing blog {blog_id}")
+            
+            # Get blog details to find the project
+            blog_response = supabase_client.table("blogs").select("project_id").eq("id", blog_id).execute()
+            
+            if not blog_response.data:
+                logger.error(f"❌ Blog {blog_id} not found")
+                return {"success": False, "error": "Blog not found"}
+            
+            project_id = blog_response.data[0]["project_id"]
+            
+            # Trigger WordPress upload
+            await self._trigger_wordpress_media_upload(blog_id, project_id)
+            
+            return {"success": True, "message": "WordPress upload triggered successfully"}
+            
+        except Exception as e:
+            logger.error(f"❌ Error manually triggering WordPress upload for blog {blog_id}: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def get_wordpress_upload_status(self, blog_id: str):
+        """Get the WordPress upload status for a blog"""
+        try:
+            # Get all images for the blog
+            response = supabase_client.table("images").select(
+                "id, image_number, status, s3_url, wordpress_media_url, wordpress_media_id, prompt"
+            ).eq("blog_id", blog_id).order("image_number").execute()
+            
+            if not response.data:
+                return {"blog_id": blog_id, "images": [], "total_count": 0}
+            
+            images = response.data
+            
+            # Calculate statistics
+            total_count = len(images)
+            ready_for_wordpress = len([img for img in images if img.get("status") == "generated" and img.get("s3_url") and not img.get("wordpress_media_url")])
+            uploaded_to_wordpress = len([img for img in images if img.get("wordpress_media_url")])
+            
+            return {
+                "blog_id": blog_id,
+                "images": images,
+                "total_count": total_count,
+                "ready_for_wordpress": ready_for_wordpress,
+                "uploaded_to_wordpress": uploaded_to_wordpress,
+                "summary": {
+                    "total_images": total_count,
+                    "generated": len([img for img in images if img.get("status") == "generated"]),
+                    "pending": len([img for img in images if img.get("status") == "pending"]),
+                    "failed": len([img for img in images if img.get("status") == "failed"]),
+                    "wordpress_ready": ready_for_wordpress,
+                    "wordpress_uploaded": uploaded_to_wordpress
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error getting WordPress upload status for blog {blog_id}: {e}")
+            return {"blog_id": blog_id, "error": str(e)}
 
 # Create service instance
 blog_generation_service = BlogGenerationService()

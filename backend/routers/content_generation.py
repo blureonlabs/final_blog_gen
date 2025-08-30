@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from typing import List, Optional
 from uuid import UUID
+from pydantic import BaseModel
 import logging
 
 from models.blog import (
@@ -16,6 +17,7 @@ from core.supabase_client import supabase_client
 from core.auth import get_current_user
 from tasks.content_generation import generate_blogs_task
 from services.blog_generation_service import blog_generation_service
+from services.serp_api_service import SerpAPIService
 
 logger = logging.getLogger(__name__)
 
@@ -220,6 +222,111 @@ async def generate_blogs_direct(
         
         logger.info(f"✅ API keys found: OpenAI={bool(project_api_keys.get('openai'))}, Gemini={bool(project_api_keys.get('gemini'))}")
         
+        # Check if SerpAPI research is enabled for this project
+        serp_api_enabled = project.get("serp_api_on", False)
+        serp_api_key = project_api_keys.get("serp")
+        
+        if serp_api_enabled and serp_api_key:
+            logger.info(f"🔍 SerpAPI research is enabled for project {request.project_id}")
+            
+            # Check if research has already been done for this project
+            existing_research = project.get("serp_api_contents")
+            enhanced_research = project.get("enhanced_research", False)
+            
+            # Use smart research reuse logic
+            async with SerpAPIService() as serp_service:
+                if serp_service.should_reuse_research(existing_research, project_description, max_age_hours=24):
+                    logger.info(f"✅ Reusing existing SerpAPI research for project {request.project_id}")
+                    logger.info(f"🔍 Found {existing_research.get('total_results', 0)} existing research sources")
+                    
+                    # Use existing research results
+                    research_results = existing_research
+                    
+                    # Enhance project description with existing research insights and SEO keywords
+                    enhanced_description = f"{project_description}\n\nResearch Insights:\n"
+                    enhanced_description += research_results["research_summary"]
+                    
+                    if research_results["key_insights"]:
+                        enhanced_description += "\n\nKey Insights:\n"
+                        for insight in research_results["key_insights"]:
+                            enhanced_description += f"• {insight}\n"
+                    
+                    # Add SEO keywords for content optimization
+                    if research_results.get("seo_keywords"):
+                        enhanced_description += f"\n\nSEO Keywords to Include:\n"
+                        for keyword in research_results["seo_keywords"]:
+                            enhanced_description += f"• {keyword}\n"
+                        logger.info(f"🔑 Added {len(research_results['seo_keywords'])} SEO keywords to prompt")
+                    
+                    project_description = enhanced_description
+                    logger.info(f"🔍 Enhanced project description with existing research insights and SEO keywords")
+                    
+                    # Log cost savings
+                    logger.info(f"💰 Cost savings: Reused existing research instead of new SerpAPI calls")
+                else:
+                    logger.info(f"🔍 Starting new topic research for: {project_description}")
+                    logger.info(f"🔍 Enhanced research mode: {enhanced_research}")
+                    
+                    try:
+                        # Perform SerpAPI research with enhanced option
+                        research_results = await serp_service.research_topic(
+                            topic=project_description,
+                            api_key=serp_api_key,
+                            num_results=10,
+                            enhanced_research=enhanced_research
+                        )
+                        
+                        if research_results["success"]:
+                            logger.info(f"✅ SerpAPI research completed successfully")
+                            logger.info(f"🔍 Found {research_results['total_results']} relevant sources")
+                            
+                            # Update project with research results
+                            research_content = {
+                                "topic": project_description,
+                                "research_summary": research_results["research_summary"],
+                                "external_links": research_results["external_links"],
+                                "key_insights": research_results["key_insights"],
+                                "seo_keywords": research_results.get("seo_keywords", []),  # Add SEO keywords
+                                "total_results": research_results["total_results"],
+                                "timestamp": "now()"
+                            }
+                            
+                            supabase.table("projects").update({
+                                "serp_api_contents": research_content,
+                                "updated_at": "now()"
+                            }).eq("id", str(request.project_id)).execute()
+                            
+                            # Enhance project description with research insights and SEO keywords
+                            enhanced_description = f"{project_description}\n\nResearch Insights:\n"
+                            enhanced_description += research_results["research_summary"]
+                            
+                            if research_results["key_insights"]:
+                                enhanced_description += "\n\nKey Insights:\n"
+                                for insight in research_results["key_insights"]:
+                                    enhanced_description += f"• {insight}\n"
+                            
+                            # Add SEO keywords for content optimization
+                            if research_results.get("seo_keywords"):
+                                enhanced_description += f"\n\nSEO Keywords to Include:\n"
+                                for keyword in research_results["seo_keywords"]:
+                                    enhanced_description += f"• {keyword}\n"
+                                logger.info(f"🔑 Added {len(research_results['seo_keywords'])} SEO keywords to prompt")
+                            
+                            project_description = enhanced_description
+                            logger.info(f"🔍 Enhanced project description with research insights and SEO keywords")
+                            
+                        else:
+                            logger.warning(f"⚠️ SerpAPI research failed: {research_results.get('error', 'Unknown error')}")
+                            logger.info(f"🔄 Proceeding with original project description")
+                    
+                    except Exception as e:
+                        logger.error(f"❌ SerpAPI research failed: {e}")
+                        logger.info(f"🔄 Proceeding with original project description")
+        else:
+            if serp_api_enabled and not serp_api_key:
+                logger.warning(f"⚠️ SerpAPI research is enabled but no SerpAPI key found")
+            logger.info(f"🔄 SerpAPI research is disabled, proceeding with direct content generation")
+        
         # Update project status to in_progress
         supabase.table("projects").update({
             "status": "in_progress",
@@ -228,6 +335,12 @@ async def generate_blogs_direct(
         
         logger.info(f"🚀 Starting blog generation with service...")
         
+        # Get project image generation settings
+        project_response = supabase.table("projects").select("generate_images, num_images_per_blog").eq("id", str(request.project_id)).execute()
+        project_data = project_response.data[0] if project_response.data else {}
+        generate_images = project_data.get("generate_images", False)
+        num_images_per_blog = project_data.get("num_images_per_blog", 1)
+        
         # Generate blogs using the service with project details and API keys
         # Use the user's selected AI model
         generated_blogs = await blog_generation_service.generate_blogs_for_project(
@@ -235,7 +348,10 @@ async def generate_blogs_direct(
             project_description=project_description,
             num_blogs=request.num_blogs,
             ai_model=ai_model,  # Use user's selected AI model
-            project_api_keys=project_api_keys
+            project_api_keys=project_api_keys,
+            max_concurrent_blogs=getattr(request, 'max_concurrent_blogs', 5),
+            generate_images=generate_images,
+            num_images_per_blog=num_images_per_blog
         )
         
         logger.info(f"✅ Blog generation completed: {len(generated_blogs)} blogs generated")
@@ -248,9 +364,10 @@ async def generate_blogs_direct(
         }).eq("id", str(request.project_id)).execute()
         
         # Log the generation completion
+        generation_method = "multi-threaded" if request.num_blogs > 1 else "sequential"
         supabase.table("activity_logs").insert({
             "user_id": str(user_id),
-            "action": f"Generated {len(generated_blogs)} blogs successfully using {request.ai_model}",
+            "action": f"Generated {len(generated_blogs)} blogs successfully using {request.ai_model} ({generation_method})",
             "level": "info",
             "category": "generation",
             "timestamp": "now()",
@@ -259,7 +376,9 @@ async def generate_blogs_direct(
                     "project_id": str(request.project_id),
                     "ai_model": request.ai_model,
                     "blogs_generated": len(generated_blogs),
-                    "project_description": project_description
+                    "project_description": project_description,
+                    "generation_method": generation_method,
+                    "max_concurrent_blogs": getattr(request, 'max_concurrent_blogs', 5)
                 }
             }
         }).execute()
@@ -267,7 +386,7 @@ async def generate_blogs_direct(
         return BlogGenerationResponse(
             project_id=request.project_id,
             task_id=f"direct_gen_{request.project_id}",
-            message=f"Successfully generated {len(generated_blogs)} blogs",
+            message=f"Successfully generated {len(generated_blogs)} blogs using {generation_method} generation",
             estimated_time=0,  # Already completed
             blogs_requested=request.num_blogs,
             batch_size=request.num_blogs
@@ -282,6 +401,275 @@ async def generate_blogs_direct(
         import traceback
         logger.error(f"❌ Full traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Blog generation failed: {str(e)}")
+
+@router.post("/research-topic")
+async def research_topic(
+    project_id: str,
+    topic: str,
+    api_key: str,
+    num_results: int = 10
+):
+    """
+    Research a topic using SerpAPI before content generation
+    
+    This endpoint performs web research on a topic and returns
+    relevant content, external links, and insights that can be
+    used to enhance blog generation.
+    """
+    try:
+        logger.info(f"🔍 Starting topic research for project {project_id}: {topic}")
+        
+        # Validate project exists
+        project_response = supabase_client.table("projects").select("*").eq("id", project_id).execute()
+        if not project_response.data:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        project = project_response.data[0]
+        
+        # Perform SerpAPI research
+        async with SerpAPIService() as serp_service:
+            research_results = await serp_service.research_topic(topic, api_key, num_results)
+        
+        if not research_results["success"]:
+            logger.warning(f"⚠️ SerpAPI research failed: {research_results.get('error', 'Unknown error')}")
+            # Return empty research results instead of failing
+            research_results = {
+                "success": True,
+                "research_summary": f"Research for '{topic}' was not available. Proceeding with content generation based on project description.",
+                "external_links": [],
+                "key_insights": [],
+                "total_results": 0,
+                "raw_results": []
+            }
+        
+        # Update project with research results
+        research_content = {
+            "topic": topic,
+            "research_summary": research_results["research_summary"],
+            "external_links": research_results["external_links"],
+            "key_insights": research_results["key_insights"],
+            "total_results": research_results["total_results"],
+            "timestamp": "now()"
+        }
+        
+        # Update the project's serp_api_contents field
+        supabase_client.table("projects").update({
+            "serp_api_contents": research_content,
+            "updated_at": "now()"
+        }).eq("id", project_id).execute()
+        
+        logger.info(f"✅ Topic research completed for project {project_id}")
+        
+        return {
+            "success": True,
+            "project_id": project_id,
+            "topic": topic,
+            "research_results": research_results,
+            "message": "Topic research completed successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Topic research failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Topic research failed: {str(e)}")
+
+@router.post("/enhanced-research")
+async def enhanced_research_topic(
+    project_id: str,
+    topic: str,
+    api_key: str,
+    num_results: int = 10
+):
+    """
+    Perform enhanced SerpAPI research with AI-generated queries, external links, and content scraping
+    
+    This endpoint provides the advanced research features from the n8n workflow:
+    - AI-powered search query generation
+    - External links research from authoritative sites
+    - Content scraping for deeper analysis
+    - Enhanced filtering and insights
+    """
+    try:
+        logger.info(f"🚀 Starting enhanced topic research for project {project_id}: {topic}")
+        
+        # Validate project exists
+        project_response = supabase_client.table("projects").select("*").eq("id", project_id).execute()
+        if not project_response.data:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        project = project_response.data[0]
+        
+        # Perform enhanced SerpAPI research
+        async with SerpAPIService() as serp_service:
+            research_results = await serp_service.research_topic(
+                topic=topic, 
+                api_key=api_key, 
+                num_results=num_results,
+                enhanced_research=True
+            )
+        
+        if not research_results["success"]:
+            logger.warning(f"⚠️ Enhanced SerpAPI research failed: {research_results.get('error', 'Unknown error')}")
+            # Return empty research results instead of failing
+            research_results = {
+                "success": True,
+                "research_summary": f"Enhanced research for '{topic}' was not available. Proceeding with content generation based on project description.",
+                "external_links": [],
+                "key_insights": [],
+                "total_results": 0,
+                "raw_results": [],
+                "enhanced_research": True,
+                "content_analysis": []
+            }
+        
+        # Update project with enhanced research results
+        research_content = {
+            "topic": topic,
+            "research_summary": research_results["research_summary"],
+            "external_links": research_results["external_links"],
+            "key_insights": research_results["key_insights"],
+            "seo_keywords": research_results.get("seo_keywords", []),  # Add SEO keywords
+            "total_results": research_results["total_results"],
+            "timestamp": "now()",
+            "enhanced_research": True,
+            "content_analysis": research_results.get("content_analysis", [])
+        }
+        
+        # Update the project's serp_api_contents field
+        supabase_client.table("projects").update({
+            "serp_api_contents": research_content,
+            "updated_at": "now()"
+        }).eq("id", project_id).execute()
+        
+        logger.info(f"✅ Enhanced topic research completed for project {project_id}")
+        
+        return {
+            "success": True,
+            "project_id": project_id,
+            "topic": topic,
+            "research_results": research_results,
+            "message": "Enhanced topic research completed successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Enhanced topic research failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Enhanced topic research failed: {str(e)}")
+
+class RefreshResearchRequest(BaseModel):
+    project_id: str
+    force_refresh: bool = False
+
+@router.post("/refresh-research")
+async def refresh_research(request: RefreshResearchRequest):
+    """
+    Refresh SerpAPI research for a project
+    
+    This endpoint allows users to manually refresh their research when:
+    - They want updated information
+    - The existing research is stale
+    - They want to force a refresh regardless of age
+    
+    Args:
+        project_id: Project UUID
+        force_refresh: If True, refresh research even if it's fresh
+    """
+    try:
+        logger.info(f"🔄 Refreshing SerpAPI research for project {request.project_id}")
+        
+        # Validate project exists
+        project_response = supabase_client.table("projects").select("*").eq("id", request.project_id).execute()
+        if not project_response.data:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        project = project_response.data[0]
+        
+        # Check if SerpAPI is enabled
+        if not project.get("serp_api_on", False):
+            raise HTTPException(status_code=400, detail="SerpAPI research is not enabled for this project")
+        
+        # Get project API keys
+        project_api_key_ids = project.get("api_keys", {})
+        serp_api_key_id = project_api_key_ids.get("serp")
+        
+        if not serp_api_key_id:
+            raise HTTPException(status_code=400, detail="No SerpAPI key configured for this project")
+        
+        # Fetch actual API key
+        api_key_response = supabase_client.table("api_keys").select("api_key").eq("id", serp_api_key_id).execute()
+        if not api_key_response.data:
+            raise HTTPException(status_code=400, detail="SerpAPI key not found")
+        
+        serp_api_key = api_key_response.data[0]["api_key"]
+        project_description = project.get("description", "")
+        enhanced_research = project.get("enhanced_research", False)
+        
+        # Check if refresh is needed
+        existing_research = project.get("serp_api_contents")
+        
+        if not request.force_refresh and existing_research:
+            async with SerpAPIService() as serp_service:
+                if serp_service.should_reuse_research(existing_research, project_description, max_age_hours=24):
+                    logger.info(f"✅ Research is still fresh for project {request.project_id}, no refresh needed")
+                    return {
+                        "success": True,
+                        "project_id": request.project_id,
+                        "message": "Research is still fresh, no refresh needed",
+                        "research_age_hours": serp_service.is_research_fresh(existing_research, max_age_hours=24),
+                        "refreshed": False
+                    }
+        
+        # Perform new research
+        logger.info(f"🔍 Starting fresh SerpAPI research for project {request.project_id}")
+        
+        async with SerpAPIService() as serp_service:
+            research_results = await serp_service.research_topic(
+                topic=project_description,
+                api_key=serp_api_key,
+                num_results=10,
+                enhanced_research=enhanced_research
+            )
+        
+        if not research_results["success"]:
+            logger.warning(f"⚠️ SerpAPI research failed: {research_results.get('error', 'Unknown error')}")
+            raise HTTPException(status_code=500, detail=f"Research failed: {research_results.get('error', 'Unknown error')}")
+        
+        # Update project with new research results
+        research_content = {
+            "topic": project_description,
+            "research_summary": research_results["research_summary"],
+            "external_links": research_results["external_links"],
+            "key_insights": research_results["key_insights"],
+            "seo_keywords": research_results.get("seo_keywords", []),  # Add SEO keywords
+            "total_results": research_results["total_results"],
+            "timestamp": "now()",
+            "enhanced_research": enhanced_research,
+            "content_analysis": research_results.get("content_analysis", [])
+        }
+        
+        supabase_client.table("projects").update({
+            "serp_api_contents": research_content,
+            "updated_at": "now()"
+        }).eq("id", request.project_id).execute()
+        
+        logger.info(f"✅ Research refreshed successfully for project {request.project_id}")
+        
+        return {
+            "success": True,
+            "project_id": request.project_id,
+            "message": "Research refreshed successfully",
+            "research_results": research_results,
+            "refreshed": True,
+            "total_results": research_results["total_results"]
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Research refresh failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Research refresh failed: {str(e)}")
 
 @router.get("/blogs/{project_id}", response_model=BlogListResponse)
 async def get_project_blogs(
@@ -305,7 +693,7 @@ async def get_project_blogs(
         offset = (page - 1) * per_page
         
         # Get blogs with pagination
-        blogs_response = supabase.table("blogs").select("*").eq("project_id", str(project_id)).range(offset, offset + per_page - 1).order("created_at", desc=True).execute()
+        blogs_response = supabase.table("blogs").select("*").eq("project_id", str(project_id)).range(offset, offset + per_page).order("created_at", desc=True).execute()
         
         # Get total count
         count_response = supabase.table("blogs").select("id", count="exact").eq("project_id", str(project_id)).execute()
@@ -545,55 +933,4 @@ async def get_available_models():
         }
     except Exception as e:
         logger.error(f"Error getting available models: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-@router.get("/generation-status/{project_id}")
-async def get_generation_status(
-    project_id: UUID,
-    current_user: dict = Depends(get_current_user),
-    supabase = Depends(lambda: supabase_client)
-):
-    """
-    Get the current status of blog generation for a project
-    """
-    try:
-        # Validate project access
-        project_response = supabase.table("projects").select("*").eq("id", str(project_id)).eq("user_id", str(current_user["id"])).execute()
-        
-        if not project_response.data:
-            raise HTTPException(status_code=404, detail="Project not found or access denied")
-        
-        project = project_response.data[0]
-        
-        # Get blog counts by status
-        blogs_response = supabase.table("blogs").select("status").eq("project_id", str(project_id)).execute()
-        
-        status_counts = {}
-        total_blogs = 0
-        
-        for blog in blogs_response.data:
-            status = blog["status"]
-            status_counts[status] = status_counts.get(status, 0) + 1
-            total_blogs += 1
-        
-        # Calculate progress percentage
-        progress = 0
-        if project["num_blogs"] > 0:
-            completed = status_counts.get("ready", 0) + status_counts.get("published", 0)
-            progress = int((completed / project["num_blogs"]) * 100)
-        
-        return {
-            "project_id": str(project_id),
-            "project_name": project["name"],
-            "num_blogs_requested": project["num_blogs"],
-            "blogs_generated": total_blogs,
-            "progress_percentage": progress,
-            "status_breakdown": status_counts,
-            "project_status": project["status"]
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting generation status: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")

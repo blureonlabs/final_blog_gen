@@ -31,6 +31,10 @@ celery_app.conf.update(
     task_soft_time_limit=25 * 60,  # 25 minutes
     worker_prefetch_multiplier=1,
     worker_max_tasks_per_child=1000,
+    # Multi-threading configuration
+    worker_concurrency=10,  # Number of worker processes
+    task_acks_late=True,  # Acknowledge tasks after completion
+    worker_prefetch_multiplier=1,  # Process one task at a time per worker
 )
 
 # Task routing

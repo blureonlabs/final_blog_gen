@@ -18,6 +18,8 @@ interface ContentGenerationModalProps {
   onClose: () => void;
   projectId: string;
   projectName: string;
+  serpApiEnabled?: boolean;  // Add SerpAPI status
+  serpApiContents?: any;     // Add SerpAPI research results
 }
 
 interface AIModel {
@@ -38,7 +40,9 @@ export function ContentGenerationModal({
   isOpen,
   onClose,
   projectId,
-  projectName
+  projectName,
+  serpApiEnabled,
+  serpApiContents
 }: ContentGenerationModalProps) {
   const [prompt, setPrompt] = useState('');
   const [numBlogs, setNumBlogs] = useState(5);
@@ -233,6 +237,30 @@ export function ContentGenerationModal({
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Generate Blogs for "{projectName}"</DialogTitle>
+          
+          {/* SerpAPI Status Display */}
+          {serpApiEnabled && (
+            <div className="mt-2">
+              <div className="flex items-center gap-2 text-sm">
+                <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                <span className="text-blue-700 font-medium">SerpAPI Research Enabled</span>
+                {serpApiContents && (
+                  <Badge variant="secondary" className="ml-2">
+                    {serpApiContents.total_results || 0} sources researched
+                  </Badge>
+                )}
+              </div>
+              
+              {/* Show research summary if available */}
+              {serpApiContents && serpApiContents.research_summary && (
+                <div className="mt-2 p-3 bg-blue-50 rounded-md">
+                  <p className="text-xs text-blue-800">
+                    <strong>Research Summary:</strong> {serpApiContents.research_summary.substring(0, 150)}...
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
         </DialogHeader>
 
         <div className="space-y-6">
@@ -392,14 +420,14 @@ export function ContentGenerationModal({
                 {Object.entries(availableModels).map(([provider, models]) => (
                   <div key={provider}>
                     <span className="font-medium capitalize">{provider}:</span>
-                    {models.length > 0 ? (
-                      <div className="flex flex-wrap gap-2 mt-1">
-                        {models.map((model) => (
-                          <Badge key={model} variant="secondary" className="text-xs">
-                            {model}
-                          </Badge>
-                        ))}
-                      </div>
+                                          {models.length > 0 ? (
+                        <div className="flex flex-wrap gap-2 mt-1">
+                          {models.map((model: string) => (
+                            <Badge key={model} variant="secondary" className="text-xs">
+                              {model}
+                            </Badge>
+                          ))}
+                        </div>
                     ) : (
                       <span className="text-gray-500 ml-2">No API key configured</span>
                     )}

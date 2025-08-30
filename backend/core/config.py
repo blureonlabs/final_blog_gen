@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
     GEMINI_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY")
     SERP_API_KEY: Optional[str] = os.getenv("SERP_API_KEY")
+    FAL_AI_API_KEY: Optional[str] = os.getenv("FAL_AI_API_KEY")
     
     # Storage Configuration
     STORAGE_BUCKET_NAME: str = os.getenv("STORAGE_BUCKET_NAME", "blog-content")

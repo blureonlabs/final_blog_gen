@@ -132,7 +132,7 @@ class ContentGenerationService:
             - Use proper headings and subheadings
             - Include relevant examples and actionable insights
             - Optimize for SEO with natural keyword usage
-            - Target word count: 800-1200 words
+            - Target word count: 20-30 words.
             - Format with proper HTML tags for structure
             
             Write the complete blog post:
