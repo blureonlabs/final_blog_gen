@@ -180,7 +180,17 @@ async def get_project_blogs(
         offset = (page - 1) * per_page
         response = query.range(offset, offset + per_page).order("created_at", desc=True).execute()
         
+        # Debug: Log the raw blog data to see what fields are present
+        logger.info(f"🔍 Raw blog data from database:")
+        for blog in response.data:
+            logger.info(f"  Blog {blog.get('id')}: {blog.get('title')} - is_published: {blog.get('is_published')}, status: {blog.get('status')}")
+        
         blogs = [BlogResponse(**blog) for blog in response.data]
+        
+        # Debug: Log the processed blog data to see what fields are in the response
+        logger.info(f"🔍 Processed blog data for response:")
+        for blog in blogs:
+            logger.info(f"  Blog {blog.id}: {blog.title} - is_published: {blog.is_published}, status: {blog.status}")
         
         return BlogListResponse(
             blogs=blogs,

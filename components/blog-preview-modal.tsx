@@ -18,6 +18,7 @@ interface Blog {
   ai_model?: string
   storage_path?: string | null | undefined
   storage_bucket?: string | null | undefined
+  is_published?: boolean
 }
 
 interface BlogPreviewModalProps {
@@ -80,7 +81,7 @@ export function BlogPreviewModal({ blog, onClose }: BlogPreviewModalProps) {
             <div>
               <CardTitle className="text-xl font-bold text-gray-900">{blog.title || "Untitled Blog"}</CardTitle>
               <CardDescription className="text-gray-600">
-                Created on {new Date(blog.created_at).toLocaleDateString()} • Status: {blog.status}
+                Created on {new Date(blog.created_at).toLocaleDateString()}
               </CardDescription>
             </div>
             <div className="flex items-center space-x-2">
@@ -89,10 +90,14 @@ export function BlogPreviewModal({ blog, onClose }: BlogPreviewModalProps) {
                   onClick={() => window.open(blog.wordpress_url!, "_blank")}
                   variant="outline"
                   size="sm"
-                  className="border-gray-300 text-gray-600 hover:bg-gray-50"
+                  className={`${
+                    blog.is_published === true
+                      ? "border-green-300 text-green-600 hover:bg-green-50" 
+                      : "border-gray-300 text-gray-600 hover:bg-gray-50"
+                  }`}
                 >
                   <ExternalLink className="h-4 w-4 mr-2" />
-                  View Live
+                  {blog.is_published === true ? "View Live" : "View Draft"}
                 </Button>
               )}
               <Button onClick={onClose} variant="ghost" size="sm" className="text-gray-400 hover:text-gray-600">

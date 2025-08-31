@@ -122,14 +122,15 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
           const calculatedTotalPages = Math.ceil((apiData.total || 0) / perPage)
           setTotalPages(calculatedTotalPages)
           
-          if (apiData.blogs && apiData.blogs.length > 0) {
+                    if (apiData.blogs && apiData.blogs.length > 0) {
             // Map backend blog statuses to frontend statuses
                          const mappedBlogs = apiData.blogs.map((blog: any) => {
                const mappedStatus = mapBackendStatusToFrontend(blog.status)
                console.log(`🔄 Mapping blog "${blog.title}": ${blog.status} → ${mappedStatus}`)
+               console.log(`🔍 Blog ${blog.title} is_published:`, blog.is_published)
+               console.log(`🔍 Blog ${blog.title} wordpress_url:`, blog.wordpress_url)
                return {
-                 id: blog.id,
-                 title: blog.title,
+                 ...blog, // Include all backend fields including is_published
                  status: mappedStatus,
                  word_count: blog.word_count || 0,
                  created_at: blog.created_at,
@@ -143,6 +144,7 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
              })
             
             console.log("✅ Final mapped blogs for frontend:", mappedBlogs)
+            console.log("🔍 Blogs with is_published=true:", mappedBlogs.filter(b => b.is_published === true))
             setBlogs(mappedBlogs)
             setLoading(false)
             return
@@ -180,6 +182,7 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
              word_count: blogContent.split(' ').length,
              created_at: new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000).toISOString(),
              published_at: status === "published" ? new Date().toISOString() : undefined,
+             is_published: status === "published", // Add is_published field for mock data
              content: blogContent,
              prompt: `Generate content about ${foundProject.name}`,
              wordpress_url: status === "published" ? `https://yourwordpress.com/blog-${blogIndex}` : `https://yourwordpress.com/draft-${blogIndex}`,
@@ -476,6 +479,7 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
       
       if (response.ok) {
         const apiData = await response.json()
+        console.log("📡 Refresh response:", apiData)
         
         // Update pagination state
         setTotalBlogs(apiData.total || 0)
@@ -485,6 +489,7 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
         if (apiData.blogs && apiData.blogs.length > 0) {
           const mappedBlogs = apiData.blogs.map((blog: any) => {
             const mappedStatus = mapBackendStatusToFrontend(blog.status)
+            console.log(`🔄 Refresh mapping blog "${blog.title}": status=${blog.status} → ${mappedStatus}, is_published=${blog.is_published}`)
             return {
               ...blog,
               status: mappedStatus,
@@ -494,6 +499,7 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
           })
           setBlogs(mappedBlogs)
           console.log("✅ Blog list refreshed:", mappedBlogs.length, "blogs")
+          console.log("🔍 Blogs with is_published=true after refresh:", mappedBlogs.filter(b => b.is_published === true))
         }
       }
     } catch (error) {
@@ -692,6 +698,7 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
           word_count: Math.floor(Math.random() * 1000) + 500,
           created_at: new Date().toISOString(),
           published_at: status === "published" ? new Date().toISOString() : undefined,
+          is_published: status === "published", // Add is_published field for mock data
         })
         blogIndex++
       }
@@ -729,7 +736,7 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
     )
   }
 
-  const publishedBlogs = blogs.filter((blog) => blog.status === "published").length
+  const publishedBlogs = blogs.filter((blog) => blog.is_published === true).length
   const draftBlogs = blogs.filter((blog) => blog.status === "draft").length
   const generatingBlogs = blogs.filter((blog) => blog.status === "generating").length
   const failedBlogs = blogs.filter((blog) => blog.status === "failed").length
@@ -883,15 +890,7 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
             </Button>
           )}
 
-          <Button 
-            onClick={refreshBlogList} 
-            variant="outline" 
-            size="sm"
-            className="border-gray-300 text-gray-600 hover:bg-gray-50"
-          >
-            <RotateCcw className="h-4 w-4 mr-2" />
-            Refresh Blogs
-          </Button>
+          
         </div>
       </div>
 
@@ -1325,6 +1324,12 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
                         {getStatusIcon(blog.status)}
                         <span className="capitalize">{blog.status}</span>
                       </span>
+                      {blog.is_published && (
+                        <span className="px-2 py-1 rounded-full text-xs bg-green-100 text-green-800 border border-green-200 flex items-center space-x-1">
+                          <CheckCircle className="h-3 w-3" />
+                          <span>Published</span>
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center space-x-2">
@@ -1335,7 +1340,7 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
                       </div>
                     )}
 
-                    {(blog.status === "draft" || blog.status === "ready") && (
+                    {(blog.status === "draft" || blog.status === "ready") && !blog.is_published && (
                       <Button
                         onClick={() => handlePublishSingle(blog.id)}
                         variant="outline"
@@ -1346,6 +1351,8 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
                         Publish
                       </Button>
                     )}
+
+
 
                     {blog.status === "ready" && (
                       <Button
@@ -1365,13 +1372,16 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
                         variant="outline"
                         size="sm"
                         className={`${
-                          blog.status === "published" 
+                          blog.is_published === true
                             ? "border-green-300 text-green-600 hover:bg-green-50" 
                             : "border-gray-300 text-gray-600 hover:bg-gray-50"
                         }`}
                       >
                         <ExternalLink className="h-4 w-4 mr-2" />
-                        {blog.status === "published" ? "View Live" : "View Draft"}
+                        {(() => {
+                          console.log(`🔍 Button text for blog "${blog.title}": is_published=${blog.is_published}, wordpress_url=${blog.wordpress_url}`)
+                          return blog.is_published === true ? "View Live" : "View Draft"
+                        })()}
                       </Button>
                     )}
                   </div>

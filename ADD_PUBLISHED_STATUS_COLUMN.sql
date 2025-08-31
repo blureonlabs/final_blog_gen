@@ -17,4 +17,4 @@ WHERE status IN ('published', 'wordpress_published');
 COMMENT ON COLUMN blogs.is_published IS 'Indicates whether the blog has been published to WordPress (separate from generation status)';
 
 -- Show the updated table structure
-\d blogs;
+-- Note: Use 'DESCRIBE blogs;' in MySQL or check table structure in your database client

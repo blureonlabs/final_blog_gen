@@ -64,6 +64,8 @@ class BlogResponse(BaseModel):
     generation_logs: Optional[List[Dict[str, Any]]] = None
     # AI Model Configuration and Vetting Metadata
     generation_metadata: Optional[Dict[str, Any]] = None  # New field for AI generation metadata
+    # Publishing status
+    is_published: Optional[bool] = None
     created_at: datetime
     updated_at: datetime
 

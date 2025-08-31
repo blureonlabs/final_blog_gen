@@ -27,6 +27,7 @@ export interface Project {
     id: string
     status: string
     project_id: string
+    is_published?: boolean
   }>
 }
 

@@ -86,11 +86,13 @@ export function WordPressPublishModal({
       }
 
       const result = await response.json()
+      console.log("📡 WordPress publish response:", result)
       setPublishResult(result)
       setSuccess(true)
 
       // Call success callback if provided
       if (onSuccess) {
+        console.log("🔄 Calling onSuccess callback")
         onSuccess()
       }
 

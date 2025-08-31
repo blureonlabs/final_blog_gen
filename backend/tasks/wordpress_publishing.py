@@ -77,9 +77,10 @@ async def publish_to_wordpress_task(self, blog_id: str, wordpress_account_id: st
             except Exception as e:
                 logger.warning(f"⚠️ Could not update WordPress data, but publishing succeeded: {e}")
             
-            # Update status to published
+            # Update publishing status using the new is_published column
             try:
-                update_blog_status(blog_id, BlogStatus.PUBLISHED)
+                # Keep status as 'ready' for generation workflow, but mark as published
+                update_blog_publishing_status(blog_id, True)
                 
                 # Get project_id from blog to update project status
                 try:
@@ -92,7 +93,7 @@ async def publish_to_wordpress_task(self, blog_id: str, wordpress_account_id: st
                     logger.warning(f"⚠️ Could not update project status: {project_status_error}")
                     
             except Exception as e:
-                logger.warning(f"⚠️ Could not update status to published, but publishing succeeded: {e}")
+                logger.warning(f"⚠️ Could not update publishing status, but publishing succeeded: {e}")
             
             logger.info(f"WordPress publishing completed for blog {blog_id}")
             
@@ -531,6 +532,29 @@ def update_blog_status(blog_id: str, status: BlogStatus, error_message: str = No
         import traceback
         logger.error(f"Full traceback: {traceback.format_exc()}")
 
+def update_blog_publishing_status(blog_id: str, is_published: bool):
+    """Update blog publishing status using the new is_published column"""
+    try:
+        logger.info(f"🔄 Updating blog {blog_id} publishing status to: {is_published}")
+        update_data = {
+            "is_published": is_published,
+            "updated_at": datetime.now().isoformat()
+        }
+        
+        logger.info(f"📝 Update data: {update_data}")
+        response = supabase_client.table("blogs").update(update_data).eq("id", blog_id).execute()
+        
+        if response.data:
+            logger.info(f"✅ Successfully updated blog {blog_id} publishing status to {is_published}")
+            logger.info(f"📊 Response data: {response.data}")
+        else:
+            logger.error(f"❌ Failed to update blog {blog_id} publishing status - no response data")
+            
+    except Exception as e:
+        logger.error(f"❌ Error updating blog publishing status: {e}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+
 def update_blog_wordpress_data(blog_id: str, wp_data: Dict):
     """Update blog with WordPress publishing data"""
     try:
@@ -650,7 +674,7 @@ def bulk_publish_to_wordpress_task(self, project_id: str, wordpress_account_id: 
                 # Wait for result (in production, you might want to handle this asynchronously)
                 blog_result = result.get(timeout=60)
                 
-                if blog_result and blog_result.get("status") == "published":
+                if blog_result and blog_result.get("success") == True:
                     blogs_published += 1
                 else:
                     blogs_failed += 1
@@ -757,19 +781,21 @@ def check_and_update_project_status(project_id: str):
         current_status = project.get("status", "unknown")
         
         # Count blogs by status in database
-        blogs_response = supabase_client.table("blogs").select("id, status").eq("project_id", project_id).execute()
+        blogs_response = supabase_client.table("blogs").select("id, status, is_published").eq("project_id", project_id).execute()
         total_blogs_in_db = len(blogs_response.data) if blogs_response.data else 0
         
-        # Count blogs by status
+        # Count blogs by status using the new is_published column
         published_blogs = 0
         generated_blogs = 0
         
         if blogs_response.data:
             for blog in blogs_response.data:
                 blog_status = blog.get("status", "unknown")
-                if blog_status in ["published", "completed", "ready"]:
+                is_published = blog.get("is_published", False)
+                
+                if blog_status in ["completed", "ready"]:
                     generated_blogs += 1
-                    if blog_status == "published":
+                    if is_published:
                         published_blogs += 1
                 elif blog_status in ["generating", "draft"]:
                     generated_blogs += 1

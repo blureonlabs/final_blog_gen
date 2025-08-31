@@ -37,6 +37,7 @@ export interface Blog {
   wordpress_url?: string | null
   storage_path?: string | null
   storage_bucket?: string | null
+  is_published?: boolean
 }
 
 export interface WordPressAccount {
