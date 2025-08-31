@@ -2,7 +2,6 @@
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Progress } from "@/components/ui/progress"
 import { Clock, FileText, CheckCircle, AlertCircle, PlayCircle } from "lucide-react"
 
 interface Project {
@@ -14,6 +13,12 @@ interface Project {
   status: "in_progress" | "partial" | "completed" | "failed" | "pending" | "ready"
   created_at: string
   updated_at: string
+  blogs?: Array<{
+    id: string
+    status: string
+    project_id: string
+    is_published?: boolean
+  }>
 }
 
 interface ProjectListProps {
@@ -120,8 +125,54 @@ export function ProjectList({ projects, loading, onProjectSelect, onResume }: Pr
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
              {projects.map((project) => {
-         const progressPercentage = (project.completed_blogs / project.num_blogs) * 100
          const projectStatus = getProjectStatus(project)
+         
+         // Calculate blog statistics
+         const blogs = project.blogs || []
+         console.log(`Project ${project.name} blogs:`, blogs) // Debug log
+         
+         // Handle both array and object formats from Supabase
+         let generatedBlogs = 0
+         let publishedBlogs = 0
+         
+         if (Array.isArray(blogs)) {
+           // Debug: Log all unique status values
+           const uniqueStatuses = [...new Set(blogs.map((blog: any) => blog.status))]
+           console.log(`Project ${project.name} unique blog statuses:`, uniqueStatuses)
+           
+           // Count blogs that are generated (regardless of publishing status)
+           generatedBlogs = blogs.filter((blog: any) => 
+             blog.status === 'generating' || 
+             blog.status === 'generated' || 
+             blog.status === 'completed' || 
+             blog.status === 'ready' ||
+             blog.status === 'pending'
+           ).length
+           
+           // Count blogs that are published (using the new is_published column)
+           publishedBlogs = blogs.filter((blog: any) => blog.is_published === true).length
+         } else if (blogs && typeof blogs === 'object') {
+           // If blogs is an object with blog IDs as keys
+           const blogArray = Object.values(blogs)
+           const uniqueStatuses = [...new Set(blogArray.map((blog: any) => blog.status))]
+           console.log(`Project ${project.name} unique blog statuses:`, uniqueStatuses)
+           
+           generatedBlogs = blogArray.filter((blog: any) => 
+             blog.status === 'generating' || 
+             blog.status === 'completed' || 
+             blog.status === 'ready' ||
+             blog.status === 'pending'
+           ).length
+           
+           publishedBlogs = blogArray.filter((blog: any) => blog.is_published === true).length
+         }
+         
+         // Fallback to completed_blogs if no blogs array or empty blogs
+         if (generatedBlogs === 0 && publishedBlogs === 0 && project.completed_blogs > 0) {
+           // If we have no blog data but completed_blogs exists, use it as generated
+           generatedBlogs = project.completed_blogs
+           console.log(`Using fallback: project.completed_blogs = ${project.completed_blogs}`)
+         }
 
          return (
            <Card
@@ -139,28 +190,25 @@ export function ProjectList({ projects, loading, onProjectSelect, onResume }: Pr
                <CardDescription className="text-gray-600 line-clamp-2">{project.description}</CardDescription>
              </CardHeader>
              <CardContent className="space-y-4">
-               <div className="space-y-2">
-                 <div className="flex items-center justify-between text-sm">
-                   <span className="text-gray-600">Progress</span>
-                   <span className="font-medium">
-                     {project.completed_blogs}/{project.num_blogs} blogs
-                   </span>
+               <div className="grid grid-cols-2 gap-4">
+                 <div className="text-center p-3 bg-blue-50 rounded-lg">
+                   <div className="text-2xl font-bold text-blue-600">{generatedBlogs}</div>
+                   <div className="text-xs text-blue-600">Generated</div>
                  </div>
-                 <Progress value={progressPercentage} className="h-2" />
+                 <div className="text-center p-3 bg-green-50 rounded-lg">
+                   <div className="text-2xl font-bold text-green-600">{publishedBlogs}</div>
+                   <div className="text-xs text-green-600">Published</div>
+                 </div>
                </div>
 
-                               <div className="flex items-center justify-between">
-                   <div className="flex items-center space-x-2">
-                     <FileText className="h-4 w-4 text-gray-400" />
-                     <span className="text-sm text-gray-600">{Math.round(progressPercentage)}% generated</span>
-                   </div>
-                   <Badge className={getStatusColor(projectStatus)}>{getStatusLabel(projectStatus)}</Badge>
+               <div className="flex items-center justify-between">
+                 <div className="flex items-center space-x-2">
+                   <FileText className="h-4 w-4 text-gray-400" />
+                   <span className="text-sm text-gray-600">{generatedBlogs}/{project.num_blogs} blogs</span>
                  </div>
-                 {projectStatus === "partial" && (
-                   <p className="text-xs text-orange-600 mt-1">
-                     Note: Status shows generation progress, not WordPress publishing
-                   </p>
-                 )}
+                 <Badge className={getStatusColor(projectStatus)}>{getStatusLabel(projectStatus)}</Badge>
+               </div>
+
              </CardContent>
            </Card>
          )

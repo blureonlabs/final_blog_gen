@@ -23,6 +23,11 @@ export interface Project {
   num_images_per_blog?: number
   created_at: string
   updated_at: string
+  blogs?: Array<{
+    id: string
+    status: string
+    project_id: string
+  }>
 }
 
 export interface WordPressAccount {
@@ -659,7 +664,15 @@ class SupabaseAPI {
     
     const { data, error } = await supabase
       .from('projects')
-      .select('*')
+      .select(`
+        *,
+        blogs (
+          id,
+          status,
+          project_id,
+          is_published
+        )
+      `)
       .eq('user_id', userId)
       .order('created_at', { ascending: false })
 

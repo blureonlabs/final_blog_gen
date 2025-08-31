@@ -464,35 +464,15 @@ export function Dashboard({ user }: DashboardProps) {
                   </div>
                 </div>
 
-                {activeProjects.length > 0 && (
-                   <div className="mb-12">
-                     <h3 className="text-xl font-semibold text-foreground mb-6">Active Projects</h3>
-                     <p className="text-sm text-muted-foreground mb-4">
-                       Projects that are in progress, partially generated, or ready to start
-                     </p>
-                     <ProjectList projects={activeProjects} loading={false} onProjectSelect={handleProjectSelect} onResume={handleResume} />
-                   </div>
-                 )}
-
-                 {completedProjects.length > 0 && (
-                   <div>
-                     <h3 className="text-xl font-semibold text-foreground mb-6">Completed Projects</h3>
-                     <p className="text-sm text-muted-foreground mb-4">
-                       Projects where all blogs have been generated and published to WordPress
-                     </p>
-                     <ProjectList projects={completedProjects} loading={false} onProjectSelect={handleProjectSelect} onResume={handleResume} />
-                   </div>
-                 )}
-
-                 {failedProjects.length > 0 && (
-                   <div>
-                     <h3 className="text-xl font-semibold text-foreground mb-6">Failed Projects</h3>
-                     <p className="text-sm text-muted-foreground mb-4">
-                       Projects that encountered errors during blog generation
-                     </p>
-                     <ProjectList projects={failedProjects} loading={false} onProjectSelect={handleProjectSelect} onResume={handleResume} />
-                   </div>
-                 )}
+                                 {activeProjects.length > 0 && (
+                    <div className="mb-12">
+                      <h3 className="text-xl font-semibold text-foreground mb-6">Active Projects</h3>
+                      <p className="text-sm text-muted-foreground mb-4">
+                        Projects that are in progress, partially generated, or ready to start
+                      </p>
+                      <ProjectList projects={activeProjects} loading={false} onProjectSelect={handleProjectSelect} onResume={handleResume} />
+                    </div>
+                  )}
               </>
             )}
           </div>
