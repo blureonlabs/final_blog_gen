@@ -914,18 +914,7 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
                     }
                   </CardDescription>
                 </div>
-                {project.serp_api_contents && (
-                  <Button
-                    onClick={handleRefreshResearch}
-                    variant="outline"
-                    size="sm"
-                    className="border-blue-300 text-blue-600 hover:bg-blue-50"
-                    title="Refresh research data"
-                  >
-                    <RotateCcw className="h-4 w-4 mr-2" />
-                    Refresh Research
-                  </Button>
-                )}
+
               </div>
             </CardHeader>
                         <CardContent className="space-y-4">
@@ -941,26 +930,6 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
                   <p className="text-gray-600 mb-4">
                     Research will be automatically performed when you start content generation.
                   </p>
-                  <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-                    <h5 className="font-medium text-blue-900 mb-2">What happens during research?</h5>
-                    <ul className="text-sm text-blue-800 space-y-1">
-                      <li>• SerpAPI searches for relevant content about your topic</li>
-                      <li>• Extracts SEO keywords for better search rankings</li>
-                      <li>• Finds authoritative external sources and links</li>
-                      <li>• Analyzes content to provide key insights</li>
-                      {project.enhanced_research && (
-                        <li>• Enhanced research: AI-powered queries + content scraping</li>
-                      )}
-                    </ul>
-                  </div>
-                  <div className="mt-4">
-                    <Button
-                      onClick={() => setShowContentGenerationModal(true)}
-                      className="bg-blue-600 hover:bg-blue-700 text-white"
-                    >
-                      Start Content Generation
-                    </Button>
-                  </div>
                 </div>
               ) : (
                 <>
