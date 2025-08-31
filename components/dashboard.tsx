@@ -236,6 +236,11 @@ export function Dashboard({ user }: DashboardProps) {
     }
   }
 
+  // Simple function to get project status - just use what's in the database
+  const getProjectStatus = (project: Project): string => {
+    return project.status
+  }
+
   if (loading || !userData) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -247,8 +252,18 @@ export function Dashboard({ user }: DashboardProps) {
     )
   }
 
-  const activeProjects = userData.projects.filter((project) => project.status !== "completed")
-  const completedProjects = userData.projects.filter((project) => project.status === "completed")
+  const activeProjects = userData.projects.filter((project) => {
+    // Active projects are those that are in progress, partial, or ready
+    return project.status === "in_progress" || project.status === "partial" || project.status === "ready"
+  })
+  const completedProjects = userData.projects.filter((project) => {
+    // Completed projects are only those explicitly marked as completed
+    return project.status === "completed"
+  })
+  const failedProjects = userData.projects.filter((project) => {
+    // Failed projects are those with failed status
+    return project.status === "failed"
+  })
 
   return (
     <div className="min-h-screen bg-background">
@@ -398,19 +413,86 @@ export function Dashboard({ user }: DashboardProps) {
               </div>
             ) : (
               <>
-                {activeProjects.length > 0 && (
-                  <div className="mb-12">
-                    <h3 className="text-xl font-semibold text-foreground mb-6">Active Projects</h3>
-                    <ProjectList projects={activeProjects} loading={false} onProjectSelect={handleProjectSelect} onResume={handleResume} />
+                {/* Project Statistics Overview */}
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+                  <div className="bg-card border border-border rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">Total Projects</p>
+                        <p className="text-2xl font-bold text-foreground">{userData.projects.length}</p>
+                      </div>
+                      <div className="h-8 w-8 bg-blue-100 dark:bg-blue-900/20 rounded-full flex items-center justify-center">
+                        <span className="text-blue-600 dark:text-blue-400 text-sm font-medium">📊</span>
+                      </div>
+                    </div>
                   </div>
-                )}
+                  
+                  <div className="bg-card border border-border rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">Active Projects</p>
+                        <p className="text-2xl font-bold text-foreground">{activeProjects.length}</p>
+                      </div>
+                      <div className="h-8 w-8 bg-green-100 dark:bg-green-900/20 rounded-full flex items-center justify-center">
+                        <span className="text-green-600 dark:text-green-400 text-sm font-medium">🔄</span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="bg-card border border-border rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">Completed Projects</p>
+                        <p className="text-2xl font-bold text-foreground">{completedProjects.length}</p>
+                      </div>
+                      <div className="h-8 w-8 bg-emerald-100 dark:bg-emerald-900/20 rounded-full flex items-center justify-center">
+                        <span className="text-emerald-600 dark:text-emerald-400 text-sm font-medium">✅</span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="bg-card border border-border rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">Failed Projects</p>
+                        <p className="text-2xl font-bold text-foreground">{failedProjects.length}</p>
+                      </div>
+                      <div className="h-8 w-8 bg-red-100 dark:bg-red-900/20 rounded-full flex items-center justify-center">
+                        <span className="text-red-600 dark:text-red-400 text-sm font-medium">❌</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
 
-                {completedProjects.length > 0 && (
-                  <div>
-                    <h3 className="text-xl font-semibold text-foreground mb-6">Completed Projects</h3>
-                    <ProjectList projects={completedProjects} loading={false} onProjectSelect={handleProjectSelect} onResume={handleResume} />
-                  </div>
-                )}
+                {activeProjects.length > 0 && (
+                   <div className="mb-12">
+                     <h3 className="text-xl font-semibold text-foreground mb-6">Active Projects</h3>
+                     <p className="text-sm text-muted-foreground mb-4">
+                       Projects that are in progress, partially generated, or ready to start
+                     </p>
+                     <ProjectList projects={activeProjects} loading={false} onProjectSelect={handleProjectSelect} onResume={handleResume} />
+                   </div>
+                 )}
+
+                 {completedProjects.length > 0 && (
+                   <div>
+                     <h3 className="text-xl font-semibold text-foreground mb-6">Completed Projects</h3>
+                     <p className="text-sm text-muted-foreground mb-4">
+                       Projects where all blogs have been generated and published to WordPress
+                     </p>
+                     <ProjectList projects={completedProjects} loading={false} onProjectSelect={handleProjectSelect} onResume={handleResume} />
+                   </div>
+                 )}
+
+                 {failedProjects.length > 0 && (
+                   <div>
+                     <h3 className="text-xl font-semibold text-foreground mb-6">Failed Projects</h3>
+                     <p className="text-sm text-muted-foreground mb-4">
+                       Projects that encountered errors during blog generation
+                     </p>
+                     <ProjectList projects={failedProjects} loading={false} onProjectSelect={handleProjectSelect} onResume={handleResume} />
+                   </div>
+                 )}
               </>
             )}
           </div>
@@ -475,21 +557,90 @@ export function Dashboard({ user }: DashboardProps) {
                 </Button>
               </div>
             ) : (
-              <div className="space-y-8">
-                {activeProjects.length > 0 && (
-                  <div>
-                    <h3 className="text-xl font-semibold text-foreground mb-6">Active Projects ({activeProjects.length})</h3>
-                    <ProjectList projects={activeProjects} loading={false} onProjectSelect={handleProjectSelect} onResume={handleResume} />
+              <>
+                {/* Project Statistics Overview */}
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+                  <div className="bg-card border border-border rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">Total Projects</p>
+                        <p className="text-2xl font-bold text-foreground">{userData.projects.length}</p>
+                      </div>
+                      <div className="h-8 w-8 bg-blue-100 dark:bg-blue-900/20 rounded-full flex items-center justify-center">
+                        <span className="text-blue-600 dark:text-blue-400 text-sm font-medium">📊</span>
+                      </div>
+                    </div>
                   </div>
-                )}
+                  
+                  <div className="bg-card border border-border rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">Active Projects</p>
+                        <p className="text-2xl font-bold text-foreground">{activeProjects.length}</p>
+                      </div>
+                      <div className="h-8 w-8 bg-green-100 dark:bg-green-900/20 rounded-full flex items-center justify-center">
+                        <span className="text-green-600 dark:text-green-400 text-sm font-medium">🔄</span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="bg-card border border-border rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">Completed Projects</p>
+                        <p className="text-2xl font-bold text-foreground">{completedProjects.length}</p>
+                      </div>
+                      <div className="h-8 w-8 bg-emerald-100 dark:bg-emerald-900/20 rounded-full flex items-center justify-center">
+                        <span className="text-emerald-600 dark:text-emerald-400 text-sm font-medium">✅</span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="bg-card border border-border rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">Failed Projects</p>
+                        <p className="text-2xl font-bold text-foreground">{failedProjects.length}</p>
+                      </div>
+                      <div className="h-8 w-8 bg-red-100 dark:bg-red-900/20 rounded-full flex items-center justify-center">
+                        <span className="text-red-600 dark:text-red-400 text-sm font-medium">❌</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
 
-                {completedProjects.length > 0 && (
-                  <div>
-                    <h3 className="text-xl font-semibold text-foreground mb-6">Completed Projects ({completedProjects.length})</h3>
-                    <ProjectList projects={completedProjects} loading={false} onProjectSelect={handleProjectSelect} onResume={handleResume} />
-                  </div>
-                )}
-              </div>
+                <div className="space-y-8">
+                  {activeProjects.length > 0 && (
+                   <div>
+                     <h3 className="text-xl font-semibold text-foreground mb-6">Active Projects ({activeProjects.length})</h3>
+                     <p className="text-sm text-muted-foreground mb-4">
+                       Projects that are in progress, partially generated, or ready to start
+                     </p>
+                     <ProjectList projects={activeProjects} loading={false} onProjectSelect={handleProjectSelect} onResume={handleResume} />
+                   </div>
+                 )}
+
+                 {completedProjects.length > 0 && (
+                   <div>
+                     <h3 className="text-xl font-semibold text-foreground mb-6">Completed Projects ({completedProjects.length})</h3>
+                     <p className="text-sm text-muted-foreground mb-4">
+                       Projects where all blogs have been generated and published to WordPress
+                     </p>
+                     <ProjectList projects={completedProjects} loading={false} onProjectSelect={handleProjectSelect} onResume={handleResume} />
+                   </div>
+                 )}
+
+                 {failedProjects.length > 0 && (
+                   <div>
+                     <h3 className="text-xl font-semibold text-foreground mb-6">Failed Projects ({failedProjects.length})</h3>
+                     <p className="text-sm text-muted-foreground mb-4">
+                       Projects that encountered errors during blog generation
+                     </p>
+                     <ProjectList projects={failedProjects} loading={false} onProjectSelect={handleProjectSelect} onResume={handleResume} />
+                   </div>
+                 )}
+                </div>
+              </>
             )}
           </div>
         )}

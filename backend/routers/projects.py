@@ -294,3 +294,88 @@ async def extract_seo_keywords(
     except Exception as e:
         logger.error(f"❌ Unexpected error in SEO keywords extraction for project: {project_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to extract SEO keywords: {str(e)}")
+
+@router.post("/{project_id}/check-status", summary="Check and update project status based on blog generation and publishing")
+async def check_project_status(
+    project_id: UUID,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Check and update project status based on blog generation and publishing progress
+    """
+    try:
+        user_id = current_user["id"]
+        
+        # Verify project belongs to user
+        project_response = supabase_client.table("projects").select("id, user_id").eq("id", str(project_id)).execute()
+        if not project_response.data:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        project = project_response.data[0]
+        if project["user_id"] != user_id:
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        # Import and call the status check function
+        from tasks.wordpress_publishing import check_and_update_project_status
+        check_and_update_project_status(str(project_id))
+        
+        # Get updated project status
+        updated_response = supabase_client.table("projects").select("status, completed_blogs, num_blogs").eq("id", str(project_id)).execute()
+        if updated_response.data:
+            updated_project = updated_response.data[0]
+            return {
+                "message": "Project status checked and updated",
+                "project_id": str(project_id),
+                "status": updated_project["status"],
+                "completed_blogs": updated_project["completed_blogs"],
+                "num_blogs": updated_project["num_blogs"]
+            }
+        
+        return {"message": "Project status checked and updated", "project_id": str(project_id)}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error checking project status: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to check project status: {str(e)}")
+
+@router.post("/check-all-statuses", summary="Check and update all project statuses for the current user")
+async def check_all_project_statuses(
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Check and update all project statuses for the current user based on blog generation and publishing progress
+    """
+    try:
+        user_id = current_user["id"]
+        
+        # Get all projects for the user
+        projects_response = supabase_client.table("projects").select("id, name, status, completed_blogs, num_blogs").eq("user_id", user_id).execute()
+        if not projects_response.data:
+            return {"message": "No projects found for user", "projects_updated": 0}
+        
+        projects = projects_response.data
+        updated_count = 0
+        
+        # Import and call the status check function for each project
+        from tasks.wordpress_publishing import check_and_update_project_status
+        
+        for project in projects:
+            try:
+                check_and_update_project_status(str(project["id"]))
+                updated_count += 1
+            except Exception as e:
+                logger.warning(f"⚠️ Could not update status for project {project['id']}: {e}")
+                continue
+        
+        logger.info(f"✅ Updated statuses for {updated_count}/{len(projects)} projects for user {user_id}")
+        
+        return {
+            "message": f"Project statuses checked and updated for {updated_count} projects",
+            "projects_updated": updated_count,
+            "total_projects": len(projects)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error checking all project statuses: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to check project statuses: {str(e)}")

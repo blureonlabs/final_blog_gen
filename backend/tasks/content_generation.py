@@ -95,12 +95,8 @@ async def generate_blogs_task(
             if batch_end < num_blogs:
                 await asyncio.sleep(2)
         
-        # Final status update
-        final_status = "completed" if failed_blogs == 0 else "completed_with_errors"
-        await supabase.table("projects").update({
-            "status": final_status,
-            "updated_at": "now()"
-        }).eq("id", project_id).execute()
+        # Final status update - status is now managed by the blog generation service
+        # We only log completion, the service will set status to "partial" if all blogs generated
         
         # Log completion
         await supabase.table("activity_logs").insert({
@@ -118,6 +114,32 @@ async def generate_blogs_task(
                 }
             }
         }).execute()
+        
+        # Final status update to ensure project status is correct
+        try:
+            if blogs_generated >= num_blogs:
+                # All blogs generated - ensure status is set to partial
+                await supabase.table("projects").update({
+                    "status": "partial",
+                    "updated_at": "now()"
+                }).eq("id", project_id).execute()
+                logger.info(f"📊 Final project status update: set to 'partial' - all {blogs_generated} blogs generated")
+            elif blogs_generated > 0:
+                # Some blogs generated - ensure status is in_progress
+                await supabase.table("projects").update({
+                    "status": "in_progress",
+                    "updated_at": "now()"
+                }).eq("id", project_id).execute()
+                logger.info(f"📊 Final project status update: set to 'in_progress' - {blogs_generated}/{num_blogs} blogs generated")
+            else:
+                # No blogs generated - set status to failed
+                await supabase.table("projects").update({
+                    "status": "failed",
+                    "updated_at": "now()"
+                }).eq("id", project_id).execute()
+                logger.info(f"📊 Final project status update: set to 'failed' - no blogs generated")
+        except Exception as status_error:
+            logger.warning(f"⚠️ Could not update final project status: {status_error}")
         
         logger.info(f"Blog generation completed for project {project_id}: {blogs_generated}/{num_blogs} successful")
         
@@ -256,12 +278,8 @@ async def generate_blogs_multithreaded_task(
                     logger.error(f"❌ Blog {blog_number} generation exception: {e}")
                     continue
         
-        # Final status update
-        final_status = "completed" if failed_blogs == 0 else "completed_with_errors"
-        await supabase.table("projects").update({
-            "status": final_status,
-            "updated_at": "now()"
-        }).eq("id", project_id).execute()
+        # Final status update - status is now managed by the blog generation service
+        # We only log completion, the service will set status to "partial" if all blogs generated
         
         # Log completion
         await supabase.table("activity_logs").insert({
@@ -281,6 +299,32 @@ async def generate_blogs_multithreaded_task(
                 }
             }
         }).execute()
+        
+        # Final status update to ensure project status is correct
+        try:
+            if blogs_generated >= num_blogs:
+                # All blogs generated - ensure status is set to partial
+                await supabase.table("projects").update({
+                    "status": "partial",
+                    "updated_at": "now()"
+                }).eq("id", project_id).execute()
+                logger.info(f"📊 Final project status update: set to 'partial' - all {blogs_generated} blogs generated")
+            elif blogs_generated > 0:
+                # Some blogs generated - ensure status is in_progress
+                await supabase.table("projects").update({
+                    "status": "in_progress",
+                    "updated_at": "now()"
+                }).eq("id", project_id).execute()
+                logger.info(f"📊 Final project status update: set to 'in_progress' - {blogs_generated}/{num_blogs} blogs generated")
+            else:
+                # No blogs generated - set status to failed
+                await supabase.table("projects").update({
+                    "status": "failed",
+                    "updated_at": "now()"
+                }).eq("id", project_id).execute()
+                logger.info(f"📊 Final project status update: set to 'failed' - no blogs generated")
+        except Exception as status_error:
+            logger.warning(f"⚠️ Could not update final project status: {status_error}")
         
         logger.info(f"🎉 Multi-threaded blog generation completed for project {project_id}: {blogs_generated}/{num_blogs} successful")
         

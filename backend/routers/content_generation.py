@@ -357,8 +357,9 @@ async def generate_blogs_direct(
         logger.info(f"✅ Blog generation completed: {len(generated_blogs)} blogs generated")
         
         # Update project status and completed blogs count
+        # Note: Status is now managed by the blog generation service
+        # We only update completed_blogs here, status will be set to "partial" if all blogs generated
         supabase.table("projects").update({
-            "status": "completed",
             "completed_blogs": len(generated_blogs),
             "updated_at": "now()"
         }).eq("id", str(request.project_id)).execute()

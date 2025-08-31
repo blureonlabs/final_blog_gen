@@ -8,7 +8,7 @@ export interface Project {
   description: string
   num_blogs: number  // Changed from total_blogs to match database
   completed_blogs: number
-  status: "pending" | "in_progress" | "completed" | "failed" | "ready"
+  status: "pending" | "in_progress" | "partial" | "completed" | "failed" | "ready"
   wordpress_account_id?: string  // Changed from wordpress_account to match database
   api_keys?: any
   settings?: any

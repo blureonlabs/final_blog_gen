@@ -11,7 +11,7 @@ interface Project {
   description: string
   num_blogs: number
   completed_blogs: number
-  status: "in_progress" | "completed" | "failed" | "pending" | "ready"
+  status: "in_progress" | "partial" | "completed" | "failed" | "pending" | "ready"
   created_at: string
   updated_at: string
 }
@@ -24,10 +24,17 @@ interface ProjectListProps {
 }
 
 export function ProjectList({ projects, loading, onProjectSelect, onResume }: ProjectListProps) {
+  // Simple function to get project status - just use what's in the database
+  const getProjectStatus = (project: Project): string => {
+    return project.status
+  }
+
   const getStatusIcon = (status: string) => {
     switch (status) {
       case "completed":
         return <CheckCircle className="h-4 w-4 text-green-600" />
+      case "partial":
+        return <FileText className="h-4 w-4 text-orange-600" />
       case "in_progress":
         return <PlayCircle className="h-4 w-4 text-blue-600" />
       case "failed":
@@ -45,6 +52,8 @@ export function ProjectList({ projects, loading, onProjectSelect, onResume }: Pr
     switch (status) {
       case "completed":
         return "bg-green-100 text-green-800"
+      case "partial":
+        return "bg-orange-100 text-orange-800"
       case "in_progress":
         return "bg-blue-100 text-blue-800"
       case "failed":
@@ -62,6 +71,8 @@ export function ProjectList({ projects, loading, onProjectSelect, onResume }: Pr
     switch (status) {
       case "in_progress":
         return "In Progress"
+      case "partial":
+        return "Partial"
       case "completed":
         return "Completed"
       case "failed":
@@ -108,46 +119,52 @@ export function ProjectList({ projects, loading, onProjectSelect, onResume }: Pr
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-      {projects.map((project) => {
-        const progressPercentage = (project.completed_blogs / project.num_blogs) * 100
+             {projects.map((project) => {
+         const progressPercentage = (project.completed_blogs / project.num_blogs) * 100
+         const projectStatus = getProjectStatus(project)
 
-        return (
-          <Card
-            key={project.id}
-            className="bg-white shadow-sm hover:shadow-md transition-shadow cursor-pointer"
-            onClick={() => onProjectSelect(project.id)}
-          >
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-lg font-medium text-gray-900 truncate">{project.name}</CardTitle>
-                <div className="flex items-center space-x-2">
-                  {getStatusIcon(project.status)}
-                </div>
-              </div>
-              <CardDescription className="text-gray-600 line-clamp-2">{project.description}</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-600">Progress</span>
-                  <span className="font-medium">
-                    {project.completed_blogs}/{project.num_blogs} blogs
-                  </span>
-                </div>
-                <Progress value={progressPercentage} className="h-2" />
-              </div>
+         return (
+           <Card
+             key={project.id}
+             className="bg-white shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+             onClick={() => onProjectSelect(project.id)}
+           >
+             <CardHeader>
+               <div className="flex items-center justify-between">
+                 <CardTitle className="text-lg font-medium text-gray-900 truncate">{project.name}</CardTitle>
+                 <div className="flex items-center space-x-2">
+                   {getStatusIcon(projectStatus)}
+                 </div>
+               </div>
+               <CardDescription className="text-gray-600 line-clamp-2">{project.description}</CardDescription>
+             </CardHeader>
+             <CardContent className="space-y-4">
+               <div className="space-y-2">
+                 <div className="flex items-center justify-between text-sm">
+                   <span className="text-gray-600">Progress</span>
+                   <span className="font-medium">
+                     {project.completed_blogs}/{project.num_blogs} blogs
+                   </span>
+                 </div>
+                 <Progress value={progressPercentage} className="h-2" />
+               </div>
 
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <FileText className="h-4 w-4 text-gray-400" />
-                  <span className="text-sm text-gray-600">{Math.round(progressPercentage)}% complete</span>
-                </div>
-                <Badge className={getStatusColor(project.status)}>{getStatusLabel(project.status)}</Badge>
-              </div>
-            </CardContent>
-          </Card>
-        )
-      })}
+                               <div className="flex items-center justify-between">
+                   <div className="flex items-center space-x-2">
+                     <FileText className="h-4 w-4 text-gray-400" />
+                     <span className="text-sm text-gray-600">{Math.round(progressPercentage)}% generated</span>
+                   </div>
+                   <Badge className={getStatusColor(projectStatus)}>{getStatusLabel(projectStatus)}</Badge>
+                 </div>
+                 {projectStatus === "partial" && (
+                   <p className="text-xs text-orange-600 mt-1">
+                     Note: Status shows generation progress, not WordPress publishing
+                   </p>
+                 )}
+             </CardContent>
+           </Card>
+         )
+       })}
     </div>
   )
 }

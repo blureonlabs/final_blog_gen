@@ -738,6 +738,44 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
      const progressPercentage = project.num_blogs > 0 ? (totalBlogs / project.num_blogs) * 100 : 0
    const publishedPercentage = project.num_blogs > 0 ? (publishedBlogs / project.num_blogs) * 100 : 0
 
+  const getProjectStatus = () => {
+    if (project.num_blogs === 0) return "none";
+    
+    // Check if all blogs are actually published to WordPress
+    if (publishedBlogs === project.num_blogs) return "completed";
+    
+    // Check if all blogs are generated but not all published (this should be "partial")
+    if (totalBlogs === project.num_blogs && publishedBlogs < project.num_blogs) return "partial";
+    
+    // Check if blogs are currently being generated
+    if (generatingBlogs > 0 || postingBlogs > 0) return "in_progress";
+    
+    // Check if some blogs are generated but not all
+    if (totalBlogs > 0 && totalBlogs < project.num_blogs) return "in_progress";
+    
+    // Check if some blogs exist but none are published
+    if (totalBlogs > 0 && publishedBlogs === 0) return "generated_not_published";
+    
+    return "none";
+  };
+
+  const getStatusInfo = () => {
+    const status = getProjectStatus();
+    switch (status) {
+      case "completed":
+        return { label: "🎉 All Blogs Published to WordPress", bgColor: "bg-green-100 text-green-800 border-green-200" };
+             case "partial":
+         return { label: "", bgColor: "" };
+      case "in_progress":
+        return { label: "🔄 Blogs Being Generated", bgColor: "bg-blue-100 text-blue-800 border-blue-200" };
+      case "generated_not_published":
+        return { label: "⚠️ All Blogs Generated but None Published", bgColor: "bg-yellow-100 text-yellow-800 border-yellow-200" };
+             case "none":
+       default:
+         return { label: "", bgColor: "" };
+    }
+  };
+
   return (
     <div>
              {/* Header */}
@@ -759,36 +797,7 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
             <h2 className="text-2xl font-bold text-gray-900">{project.name}</h2>
               
             {/* SerpAPI Status Indicator */}
-            <div className="flex items-center gap-2 mt-2">
-              <div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                project.serp_api_on 
-                  ? 'bg-blue-100 text-blue-800' 
-                  : 'bg-gray-100 text-gray-600'
-              }`}>
-                <div className={`w-2 h-2 rounded-full mr-2 ${
-                  project.serp_api_on ? 'bg-blue-500' : 'bg-gray-400'
-                }`}></div>
-                {project.serp_api_on ? 'SerpAPI Research Enabled' : 'SerpAPI Research Disabled'}
-              </div>
-              
-              {/* Enhanced Research Badge */}
-              {project.serp_api_on && project.enhanced_research && (
-                <div className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700 ml-2">
-                  <span className="text-xs mr-1">🚀</span>
-                  Enhanced Research
-                </div>
-              )}
-              
-              {/* Show research summary if available */}
-              {project.serp_api_on && project.serp_api_contents && (
-                <div className="text-xs text-gray-600">
-                  • {project.serp_api_contents.total_results || 0} sources researched
-                  {project.enhanced_research && project.serp_api_contents.enhanced_research && (
-                    <span className="ml-2 text-green-600">• Enhanced features active</span>
-                  )}
-                </div>
-              )}
-            </div>
+
           </div>
         </div>
 
@@ -829,12 +838,7 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
               ) : (
                 <>
                   <FileText className="h-4 w-4 mr-2" />
-                  {project.status === "ready"
-                    ? "Start Content Generation"
-                    : project.status === "pending"
-                      ? "Start Content Generation"
-                      : "Resume Content Generation"
-                  }
+                                     Start Content Generation
                 </>
               )}
             </Button>
@@ -1144,6 +1148,32 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
                 <div className="text-xs text-red-700">Failed</div>
               </div>
             </div>
+
+                                                         {/* Project Status Display */}
+                 <div className="mt-3">
+                   {getStatusInfo().label && (
+                     <div className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getStatusInfo().bgColor} border`}>
+                       {getStatusInfo().label}
+                     </div>
+                   )}
+                  
+
+                  
+
+                  
+                  {/* Status Messages */}
+                  
+                  {getProjectStatus() === "generated_not_published" && (
+                    <p className="text-xs text-yellow-600 mt-2">
+                      ⚠️ {totalBlogs} blogs generated but none published to WordPress yet
+                    </p>
+                  )}
+                  {getProjectStatus() === "completed" && (
+                    <p className="text-xs text-green-600 mt-2">
+                      🎉 All {publishedBlogs} blogs successfully published to WordPress!
+                    </p>
+                  )}
+                </div>
           </div>
         </CardContent>
       </Card>

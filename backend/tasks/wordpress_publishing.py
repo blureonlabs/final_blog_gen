@@ -80,6 +80,17 @@ async def publish_to_wordpress_task(self, blog_id: str, wordpress_account_id: st
             # Update status to published
             try:
                 update_blog_status(blog_id, BlogStatus.PUBLISHED)
+                
+                # Get project_id from blog to update project status
+                try:
+                    blog_response = supabase_client.table("blogs").select("project_id").eq("id", blog_id).execute()
+                    if blog_response.data and blog_response.data[0].get("project_id"):
+                        project_id = blog_response.data[0]["project_id"]
+                        # Check and update project status based on publishing progress
+                        check_and_update_project_status(project_id)
+                except Exception as project_status_error:
+                    logger.warning(f"⚠️ Could not update project status: {project_status_error}")
+                    
             except Exception as e:
                 logger.warning(f"⚠️ Could not update status to published, but publishing succeeded: {e}")
             
@@ -650,6 +661,12 @@ def bulk_publish_to_wordpress_task(self, project_id: str, wordpress_account_id: 
         
         logger.info(f"Bulk WordPress publishing completed: {blogs_published} published, {blogs_failed} failed")
         
+        # Check and update project status after bulk publishing
+        try:
+            check_and_update_project_status(project_id)
+        except Exception as project_status_error:
+            logger.warning(f"⚠️ Could not update project status after bulk publishing: {project_status_error}")
+        
         return {
             "project_id": project_id,
             "blogs_published": blogs_published,
@@ -722,3 +739,116 @@ def test_wordpress_api_connectivity(wp_account: Dict, auth: tuple) -> Dict:
             "success": False,
             "error": f"Connectivity test error: {str(e)}"
         }
+
+def check_and_update_project_status(project_id: str):
+    """Check project status based on blog generation and publishing progress and update accordingly"""
+    try:
+        logger.info(f"🔍 Checking project status for project {project_id}")
+        
+        # Get project details
+        project_response = supabase_client.table("projects").select("num_blogs, completed_blogs, status").eq("id", project_id).execute()
+        if not project_response.data:
+            logger.warning(f"⚠️ Project {project_id} not found")
+            return
+        
+        project = project_response.data[0]
+        num_blogs = project.get("num_blogs", 0)
+        completed_blogs = project.get("completed_blogs", 0)
+        current_status = project.get("status", "unknown")
+        
+        # Count blogs by status in database
+        blogs_response = supabase_client.table("blogs").select("id, status").eq("project_id", project_id).execute()
+        total_blogs_in_db = len(blogs_response.data) if blogs_response.data else 0
+        
+        # Count blogs by status
+        published_blogs = 0
+        generated_blogs = 0
+        
+        if blogs_response.data:
+            for blog in blogs_response.data:
+                blog_status = blog.get("status", "unknown")
+                if blog_status in ["published", "completed", "ready"]:
+                    generated_blogs += 1
+                    if blog_status == "published":
+                        published_blogs += 1
+                elif blog_status in ["generating", "draft"]:
+                    generated_blogs += 1
+        
+        logger.info(f"📊 Project {project_id}: {generated_blogs}/{num_blogs} blogs generated, {published_blogs} published, current status: {current_status}")
+        
+        # Determine correct status based on blog generation and publishing progress
+        new_status = None
+        status_reason = ""
+        
+        if num_blogs == 0:
+            new_status = "ready"
+            status_reason = "No blogs requested"
+        elif generated_blogs >= num_blogs and published_blogs >= num_blogs:
+            new_status = "completed"
+            status_reason = f"All {generated_blogs}/{num_blogs} blogs generated and published"
+        elif generated_blogs >= num_blogs:
+            new_status = "partial"
+            status_reason = f"All {generated_blogs}/{num_blogs} blogs generated but only {published_blogs} published"
+        elif generated_blogs > 0:
+            # Check if any blogs are currently being generated
+            any_generating = False
+            if blogs_response.data:
+                for blog in blogs_response.data:
+                    if blog.get("status") == "generating":
+                        any_generating = True
+                        break
+            
+            if any_generating:
+                new_status = "in_progress"
+                status_reason = f"{generated_blogs}/{num_blogs} blogs generated, some currently generating"
+            else:
+                new_status = "partial"
+                status_reason = f"{generated_blogs}/{num_blogs} blogs generated"
+        else:
+            # Check if project was ever started (has blogs with failed status or was in progress)
+            failed_blogs = 0
+            if blogs_response.data:
+                for blog in blogs_response.data:
+                    if blog.get("status") == "failed":
+                        failed_blogs += 1
+            
+            # If there are failed blogs or current status indicates it was started, mark as failed
+            if failed_blogs > 0 or current_status in ["in_progress", "failed"]:
+                new_status = "failed"
+                status_reason = f"No blogs generated - generation failed ({failed_blogs} failed attempts)"
+            else:
+                new_status = "ready"
+                status_reason = "No blogs generated - project not yet started"
+        
+        # Update project if status needs to change
+        if new_status != current_status:
+            try:
+                # Update both status and completed_blogs count
+                update_data = {
+                    "status": new_status,
+                    "completed_blogs": generated_blogs,
+                    "updated_at": datetime.now().isoformat()
+                }
+                
+                supabase_client.table("projects").update(update_data).eq("id", project_id).execute()
+                logger.info(f"🎯 Project {project_id} status updated: {current_status} → {new_status} - {status_reason}")
+            except Exception as e:
+                logger.error(f"❌ Failed to update project status: {e}")
+        else:
+            logger.info(f"ℹ️ Project {project_id} status already correct: {current_status}")
+            
+            # Still update completed_blogs count if it's wrong
+            if completed_blogs != generated_blogs:
+                try:
+                    supabase_client.table("projects").update({
+                        "completed_blogs": generated_blogs,
+                        "updated_at": datetime.now().isoformat()
+                    }).eq("id", project_id).execute()
+                    logger.info(f"📊 Project {project_id} completed_blogs count updated: {completed_blogs} → {generated_blogs}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not update completed_blogs count: {e}")
+                
+    except Exception as e:
+        logger.error(f"❌ Error checking/updating project status for {project_id}: {e}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
