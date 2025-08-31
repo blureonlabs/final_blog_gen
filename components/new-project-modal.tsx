@@ -109,6 +109,7 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
 
   // Function to reset form state
   const resetForm = () => {
+    console.log("🔄 Starting form reset...")
     setName("")
     setDescription("")
     setNumBlogs(10)
@@ -125,7 +126,26 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
     setLoading(false)
     setError("")
     setShowUpgradePrompt(false)
-    console.log("🔄 Form reset - SerpAPI:", false, "Enhanced Research:", false, "Generate Images:", false, "Num Images:", 1, "Fal AI:", false)
+    console.log("🔄 Form reset completed - SerpAPI:", false, "Enhanced Research:", false, "Generate Images:", false, "Num Images:", 1, "Fal AI:", false)
+  }
+
+  // Reset form when modal closes or unmounts
+  useEffect(() => {
+    // Reset form when component mounts
+    console.log("🔄 Modal mounted - initializing form state")
+    resetForm()
+    
+    return () => {
+      console.log("🔄 Modal unmounting - cleaning up form state")
+      resetForm()
+    }
+  }, [])
+
+  // Additional cleanup when modal is about to close
+  const handleClose = () => {
+    console.log("🔄 Modal closing - cleaning up before close")
+    resetForm()
+    onClose()
   }
 
   const [name, setName] = useState("")
@@ -203,10 +223,16 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
     setEnhancedResearch(false)
     
     console.log("🔄 Modal initialized - SerpAPI:", false, "Enhanced Research:", false)
-  }, [userData])
+  }, []) // Empty dependency array - only run once when component mounts
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    
+    // Prevent multiple submissions
+    if (loading) {
+      console.log("⚠️ Form submission blocked - already loading")
+      return
+    }
 
     const canCreateProject =
       userData.wordpressAccounts.length > 0 &&
@@ -237,6 +263,15 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
 
     setLoading(true)
     setError("")
+
+    // Add timeout to prevent hanging
+    const submissionTimeout = setTimeout(() => {
+      if (loading) {
+        console.error("❌ Project creation timed out after 30 seconds")
+        setError("Project creation timed out. Please try again.")
+        setLoading(false)
+      }
+    }, 30000)
 
     try {
       const selectedWPAccount = userData.wordpressAccounts.find((a) => a.id === selectedWordPressAccount)
@@ -285,6 +320,7 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
       console.log("🔍 Project status after creation:", newProject.status)
       console.log("🔍 Project object type:", typeof newProject)
       
+      console.log("✅ Calling onSuccess with project:", newProject)
       onSuccess(newProject)
       
       // Show demo mode message if Supabase is not configured
@@ -294,7 +330,9 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
         setTimeout(() => setError(""), 5000)
       }
       
+      console.log("🔄 Resetting form after successful creation...")
       resetForm()
+      console.log("🔄 Closing modal after successful creation...")
       onClose()
     } catch (error: any) {
       console.error("❌ Project creation failed:", error)
@@ -333,6 +371,7 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
         setError(error.message || "Failed to create project. Please try again.")
       }
     } finally {
+      clearTimeout(submissionTimeout)
       setLoading(false)
     }
   }
@@ -385,10 +424,7 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
               </CardDescription>
             </div>
             <Button
-              onClick={() => {
-                resetForm()
-                onClose()
-              }}
+              onClick={handleClose}
               variant="ghost"
               size="sm"
               className="text-gray-400 hover:text-gray-600"
@@ -829,7 +865,7 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
             <div className="flex space-x-3 pt-4">
               <Button
                 type="button"
-                onClick={onClose}
+                onClick={handleClose}
                 variant="outline"
                 className="flex-1 border-gray-300 text-gray-600 hover:bg-gray-50 bg-transparent"
               >

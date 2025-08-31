@@ -651,6 +651,7 @@ export function Dashboard({ user }: DashboardProps) {
       {/* New Project Modal */}
       {showNewProject && userData && (
         <NewProjectModal
+          key={`new-project-modal-${showNewProject}`}
           onClose={() => setShowNewProject(false)}
           onSuccess={async (newProject) => {
             setShowNewProject(false)
