@@ -144,7 +144,7 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
              })
             
             console.log("✅ Final mapped blogs for frontend:", mappedBlogs)
-            console.log("🔍 Blogs with is_published=true:", mappedBlogs.filter(b => b.is_published === true))
+            console.log("🔍 Blogs with is_published=true:", mappedBlogs.filter((b: any) => b.is_published === true))
             setBlogs(mappedBlogs)
             setLoading(false)
             return
@@ -499,7 +499,7 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
           })
           setBlogs(mappedBlogs)
           console.log("✅ Blog list refreshed:", mappedBlogs.length, "blogs")
-          console.log("🔍 Blogs with is_published=true after refresh:", mappedBlogs.filter(b => b.is_published === true))
+          console.log("🔍 Blogs with is_published=true after refresh:", mappedBlogs.filter((b: any) => b.is_published === true))
         }
       }
     } catch (error) {

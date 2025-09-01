@@ -34,8 +34,10 @@ export function Settings({ onUpdate }: SettingsProps) {
   const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState("")
+  const [itemMessages, setItemMessages] = useState<Record<string, string>>({})
   const [showAddForm, setShowAddForm] = useState(false)
   const [editingAccount, setEditingAccount] = useState<string | null>(null)
+  const [editingApiKey, setEditingApiKey] = useState<string | null>(null)
   const [showAddApiKeyForm, setShowAddApiKeyForm] = useState<string | null>(null)
   const [newApiKeyName, setNewApiKeyName] = useState("")
   const [newApiKeyValue, setNewApiKeyValue] = useState("")
@@ -87,6 +89,111 @@ export function Settings({ onUpdate }: SettingsProps) {
     }
   }
 
+  // Individual save function for single items
+  const handleIndividualSave = async (type: 'apiKey' | 'wordPressAccount', itemId: string) => {
+    setSaving(true)
+    setMessage("")
+    
+    // Clear any existing message for this item
+    setItemMessages(prev => {
+      const newMessages = { ...prev }
+      delete newMessages[itemId]
+      return newMessages
+    })
+    
+    try {
+      console.log(`Saving individual ${type}:`, itemId)
+      
+      // Add a small delay to prevent rapid successive calls
+      await new Promise(resolve => setTimeout(resolve, 500))
+      
+      if (type === 'apiKey' && editingApiKeys[itemId]) {
+        await supabaseApi.updateAPIKey(itemId, editingApiKeys[itemId])
+        console.log(`✅ API key ${itemId} saved successfully`)
+      } else if (type === 'wordPressAccount' && editingWordPressAccounts[itemId]) {
+        await supabaseApi.updateWordPressAccount(itemId, editingWordPressAccounts[itemId])
+        console.log(`✅ WordPress account ${itemId} saved successfully`)
+      }
+      
+      // Set success message for this specific item
+      setItemMessages(prev => ({
+        ...prev,
+        [itemId]: `${type === 'apiKey' ? 'API key' : 'WordPress account'} saved successfully!`
+      }))
+      
+      // Update local state immediately
+      setUserData(prevData => {
+        if (!prevData) return prevData
+        
+        let newData = { ...prevData }
+        
+        if (type === 'apiKey' && editingApiKeys[itemId]) {
+          newData.apiKeys = newData.apiKeys.map(key => 
+            key.id === itemId ? { ...key, ...editingApiKeys[itemId] } : key
+          )
+        } else if (type === 'wordPressAccount' && editingWordPressAccounts[itemId]) {
+          newData.wordpressAccounts = newData.wordpressAccounts.map(acc => 
+            acc.id === itemId ? { ...acc, ...editingWordPressAccounts[itemId] } : acc
+          )
+        }
+        
+        return newData
+      })
+      
+      // Clear editing states for this specific item
+      if (type === 'apiKey') {
+        setEditingApiKeys(prev => {
+          const newState = { ...prev }
+          delete newState[itemId]
+          return newState
+        })
+        setEditingApiKey(null)
+      } else if (type === 'wordPressAccount') {
+        setEditingWordPressAccounts(prev => {
+          const newState = { ...prev }
+          delete newState[itemId]
+          return newState
+        })
+        setEditingAccount(null)
+      }
+      
+      // Clear the success message after 3 seconds
+      setTimeout(() => {
+        setItemMessages(prev => {
+          const newMessages = { ...prev }
+          delete newMessages[itemId]
+          return newMessages
+        })
+      }, 3000)
+      
+      // Refresh data
+      await refreshData()
+      
+    } catch (error) {
+      console.error(`Error saving individual ${type}:`, error)
+      let errorMessage = ""
+      if (error instanceof Error) {
+        if (error.message === 'Supabase not configured') {
+          errorMessage = "Error: Database connection not configured. Please check your environment settings."
+        } else if (error.message.includes('timed out')) {
+          errorMessage = "Error: Save operation timed out. This may be due to slow network connection. Please try again."
+        } else {
+          errorMessage = `Error saving ${type === 'apiKey' ? 'API key' : 'WordPress account'}: ${error.message}`
+        }
+      } else {
+        errorMessage = `Error saving ${type === 'apiKey' ? 'API key' : 'WordPress account'}: Unknown error occurred`
+      }
+      
+      // Set error message for this specific item
+      setItemMessages(prev => ({
+        ...prev,
+        [itemId]: errorMessage
+      }))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const handleSave = async () => {
     setSaving(true)
     setMessage("") // Clear any previous messages
@@ -110,10 +217,10 @@ export function Settings({ onUpdate }: SettingsProps) {
       for (const [keyId, apiKey] of Object.entries(editingApiKeys)) {
         console.log(`Saving API key ${keyId}:`, apiKey)
         
-        // Add individual timeout for each API key save
+        // Add individual timeout for each API key save with longer timeout
         const apiKeySavePromise = supabaseApi.updateAPIKey(keyId, apiKey)
         const apiKeyTimeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error(`API key save timed out for ${keyId}`)), 15000)
+          setTimeout(() => reject(new Error(`API key save timed out for ${keyId}`)), 30000)
         })
         
         promises.push(Promise.race([apiKeySavePromise, apiKeyTimeoutPromise]))
@@ -162,6 +269,8 @@ export function Settings({ onUpdate }: SettingsProps) {
     // Clear editing states after successful save
     setEditingApiKeys({})
     setEditingWordPressAccounts({})
+    setEditingApiKey(null)
+    setEditingAccount(null)
     
     // Force multiple refresh attempts to ensure database consistency
     // This addresses Supabase caching and transaction isolation issues
@@ -192,6 +301,8 @@ export function Settings({ onUpdate }: SettingsProps) {
       if (error instanceof Error) {
         if (error.message === 'Supabase not configured') {
           setMessage("Error: Database connection not configured. Please check your environment settings.")
+        } else if (error.message.includes('timed out')) {
+          setMessage("Error: Save operation timed out. This may be due to slow network connection. Please try again.")
         } else {
           setMessage(`Error saving settings: ${error.message}`)
         }
@@ -265,6 +376,9 @@ export function Settings({ onUpdate }: SettingsProps) {
     if (!userData || !newApiKeyName || !newApiKeyValue) return
     
     try {
+      // Add a small delay to prevent rapid successive calls
+      await new Promise(resolve => setTimeout(resolve, 500))
+      
       const newKey = await supabaseApi.addAPIKey({
         name: newApiKeyName,
         api_key: newApiKeyValue,
@@ -272,7 +386,21 @@ export function Settings({ onUpdate }: SettingsProps) {
         is_default: userData.apiKeys.filter((k) => k.service === service).length === 0,
       })
 
-      setMessage(`${service.charAt(0).toUpperCase() + service.slice(1)} key added successfully!`)
+      // Set success message for this service section
+      setItemMessages(prev => ({
+        ...prev,
+        [`add-${service}`]: `${service.charAt(0).toUpperCase() + service.slice(1)} key added successfully!`
+      }))
+      
+      // Clear the success message after 3 seconds
+      setTimeout(() => {
+        setItemMessages(prev => {
+          const newMessages = { ...prev }
+          delete newMessages[`add-${service}`]
+          return newMessages
+        })
+      }, 3000)
+      
       refreshData()
       setShowAddApiKeyForm(null)
       // Clear the form
@@ -280,11 +408,18 @@ export function Settings({ onUpdate }: SettingsProps) {
       setNewApiKeyValue("")
     } catch (error) {
       console.error("Error adding API key:", error)
+      let errorMessage = ""
       if (error instanceof Error && error.message === 'Supabase not configured') {
-        setMessage("Demo mode: API keys cannot be added without database connection")
+        errorMessage = "Demo mode: API keys cannot be added without database connection"
       } else {
-        setMessage("Error adding API key")
+        errorMessage = "Error adding API key"
       }
+      
+      // Set error message for this service section
+      setItemMessages(prev => ({
+        ...prev,
+        [`add-${service}`]: errorMessage
+      }))
     }
   }
 
@@ -304,6 +439,9 @@ export function Settings({ onUpdate }: SettingsProps) {
 
   const deleteApiKey = async (keyId: string) => {
     try {
+      // Add a small delay to prevent rapid successive calls
+      await new Promise(resolve => setTimeout(resolve, 500))
+      
       await supabaseApi.deleteAPIKey(keyId)
       // Remove from editing state if it exists
       setEditingApiKeys(prev => {
@@ -311,6 +449,10 @@ export function Settings({ onUpdate }: SettingsProps) {
         delete newState[keyId]
         return newState
       })
+      // Clear editing state if this key was being edited
+      if (editingApiKey === keyId) {
+        setEditingApiKey(null)
+      }
       setMessage("API key deleted successfully!")
       refreshData()
     } catch (error) {
@@ -327,12 +469,17 @@ export function Settings({ onUpdate }: SettingsProps) {
     if (!userData) return
     
     try {
+      // Add a small delay to prevent rapid successive calls
+      await new Promise(resolve => setTimeout(resolve, 500))
+      
       const key = userData.apiKeys.find((k) => k.id === keyId)
       if (key) {
         // First, unset all other keys of the same service as default
         const otherKeys = userData.apiKeys.filter(k => k.service === key.service && k.id !== keyId)
         for (const otherKey of otherKeys) {
           await supabaseApi.updateAPIKey(otherKey.id, { is_default: false })
+          // Add small delay between operations
+          await new Promise(resolve => setTimeout(resolve, 200))
         }
         
         // Then set the selected key as default
@@ -357,6 +504,9 @@ export function Settings({ onUpdate }: SettingsProps) {
     if (!userData || !newWordPressName || !newWordPressUrl || !newWordPressUsername || !newWordPressPassword) return
     
     try {
+      // Add a small delay to prevent rapid successive calls
+      await new Promise(resolve => setTimeout(resolve, 500))
+      
       const newAccount = await supabaseApi.addWordPressAccount({
         name: newWordPressName,
         site_url: newWordPressUrl,
@@ -364,21 +514,42 @@ export function Settings({ onUpdate }: SettingsProps) {
         password: newWordPressPassword,
       })
 
+      // Set success message for WordPress accounts section
+      setItemMessages(prev => ({
+        ...prev,
+        'add-wordpress': "WordPress account added successfully!"
+      }))
+      
+      // Clear the success message after 3 seconds
+      setTimeout(() => {
+        setItemMessages(prev => {
+          const newMessages = { ...prev }
+          delete newMessages['add-wordpress']
+          return newMessages
+        })
+      }, 3000)
+
       setShowAddForm(false)
       // Clear the form
       setNewWordPressName("")
       setNewWordPressUrl("")
       setNewWordPressUsername("")
       setNewWordPressPassword("")
-      setMessage("WordPress account added successfully!")
       refreshData()
     } catch (error) {
       console.error("Error adding WordPress account:", error)
+      let errorMessage = ""
       if (error instanceof Error && error.message === 'Supabase not configured') {
-        setMessage("Demo mode: WordPress accounts cannot be added without database connection")
+        errorMessage = "Demo mode: WordPress accounts cannot be added without database connection"
       } else {
-        setMessage("Error adding WordPress account")
+        errorMessage = "Error adding WordPress account"
       }
+      
+      // Set error message for WordPress accounts section
+      setItemMessages(prev => ({
+        ...prev,
+        'add-wordpress': errorMessage
+      }))
     }
   }
 
@@ -394,6 +565,9 @@ export function Settings({ onUpdate }: SettingsProps) {
 
   const deleteWordPressAccount = async (id: string) => {
     try {
+      // Add a small delay to prevent rapid successive calls
+      await new Promise(resolve => setTimeout(resolve, 500))
+      
       await supabaseApi.deleteWordPressAccount(id)
       if (editingAccount === id) {
         setEditingAccount(null)
@@ -497,57 +671,128 @@ export function Settings({ onUpdate }: SettingsProps) {
                     <div className="space-y-2">
                       {serviceKeys.map((apiKey) => (
                         <div key={apiKey.id} className="border border-gray-200 rounded-lg p-3">
-                          <div className="flex items-center gap-3 mb-2">
-                            <Input
-                              type="text"
-                              placeholder="Key name (e.g., Production Key)"
-                              value={getApiKeyValue(apiKey.id, "name") as string}
-                              onChange={(e) => handleApiKeyChange(apiKey.id, "name", e.target.value)}
-                              className="bg-gray-50 border-gray-300 flex-1"
-                            />
-                            <Button
-                              onClick={() => setDefaultApiKey(apiKey.id)}
-                              variant={apiKey.is_default ? "default" : "outline"}
-                              size="sm"
-                              className={
-                                apiKey.is_default
-                                  ? "bg-indigo-600 hover:bg-indigo-700 text-white"
-                                  : "border-gray-300 text-gray-700 hover:bg-gray-50"
-                              }
-                            >
-                              <Check className={`h-4 w-4 ${apiKey.is_default ? "fill-current" : ""}`} />
-                            </Button>
-                            <Button
-                              onClick={() => deleteApiKey(apiKey.id)}
-                              variant="ghost"
-                              size="sm"
-                              className="text-red-500 hover:text-red-700"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                          <div className="flex items-center justify-between mb-3">
+                            <h4 className="font-medium text-gray-900">{apiKey.name || "Unnamed Key"}</h4>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                onClick={() => setEditingApiKey(editingApiKey === apiKey.id ? null : apiKey.id)}
+                                variant="ghost"
+                                size="sm"
+                                className="text-gray-500 hover:text-gray-700"
+                              >
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                onClick={() => setDefaultApiKey(apiKey.id)}
+                                variant={apiKey.is_default ? "default" : "outline"}
+                                size="sm"
+                                className={
+                                  apiKey.is_default
+                                    ? "bg-indigo-600 hover:bg-indigo-700 text-white"
+                                    : "border-gray-300 text-gray-700 hover:bg-gray-50"
+                                }
+                              >
+                                <Check className={`h-4 w-4 ${apiKey.is_default ? "fill-current" : ""}`} />
+                              </Button>
+                              <Button
+                                onClick={() => deleteApiKey(apiKey.id)}
+                                variant="ghost"
+                                size="sm"
+                                className="text-red-500 hover:text-red-700"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
                           </div>
-                          <div className="relative">
-                            <Input
-                              type={showPasswords[`${service}_${apiKey.id}`] ? "text" : "password"}
-                              placeholder={config.placeholder}
-                              value={getApiKeyValue(apiKey.id, "api_key") as string}
-                              onChange={(e) => handleApiKeyChange(apiKey.id, "api_key", e.target.value)}
-                              className="bg-gray-50 border-gray-300 pr-10"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => togglePasswordVisibility(`${service}_${apiKey.id}`)}
-                              className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
-                            >
-                              {showPasswords[`${service}_${apiKey.id}`] ? (
-                                <EyeOff className="h-4 w-4" />
-                              ) : (
-                                <Eye className="h-4 w-4" />
-                              )}
-                            </button>
-                          </div>
+
+                          {editingApiKey === apiKey.id ? (
+                            <div className="space-y-3">
+                              <div className="flex items-center justify-between">
+                                <h5 className="font-medium text-gray-900">Edit API Key</h5>
+                                <Button
+                                  onClick={() => {
+                                    setEditingApiKey(null)
+                                    // Clear any unsaved changes for this key
+                                    setEditingApiKeys(prev => {
+                                      const newState = { ...prev }
+                                      delete newState[apiKey.id]
+                                      return newState
+                                    })
+                                  }}
+                                  variant="ghost"
+                                  size="sm"
+                                  className="text-gray-500 hover:text-gray-700"
+                                >
+                                  <X className="h-4 w-4 mr-2" />
+                                  Cancel
+                                </Button>
+                              </div>
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Key Name</label>
+                                <Input
+                                  type="text"
+                                  placeholder="Key name (e.g., Production Key)"
+                                  value={getApiKeyValue(apiKey.id, "name") as string}
+                                  onChange={(e) => handleApiKeyChange(apiKey.id, "name", e.target.value)}
+                                  className="bg-gray-50 border-gray-300"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">API Key</label>
+                                <div className="relative">
+                                  <Input
+                                    type={showPasswords[`${service}_${apiKey.id}`] ? "text" : "password"}
+                                    placeholder={config.placeholder}
+                                    value={getApiKeyValue(apiKey.id, "api_key") as string}
+                                    onChange={(e) => handleApiKeyChange(apiKey.id, "api_key", e.target.value)}
+                                    className="bg-gray-50 border-gray-300 pr-10"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => togglePasswordVisibility(`${service}_${apiKey.id}`)}
+                                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+                                  >
+                                    {showPasswords[`${service}_${apiKey.id}`] ? (
+                                      <EyeOff className="h-4 w-4" />
+                                    ) : (
+                                      <Eye className="h-4 w-4" />
+                                    )}
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="flex justify-end pt-2">
+                                <Button
+                                  onClick={() => handleIndividualSave('apiKey', apiKey.id)}
+                                  disabled={saving}
+                                  size="sm"
+                                  className="bg-indigo-600 hover:bg-indigo-700 text-white disabled:bg-gray-400 disabled:cursor-not-allowed"
+                                >
+                                  <Check className="h-4 w-4 mr-2" />
+                                  {saving ? "Saving..." : "Save Changes"}
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="text-sm text-gray-600">
+                              <p>
+                                <span className="font-medium">Name:</span> {apiKey.name || "Not configured"}
+                              </p>
+                              <p>
+                                <span className="font-medium">Key:</span> {apiKey.api_key ? "••••••••••••••••" : "Not configured"}
+                              </p>
+                            </div>
+                          )}
+                          
+                          {itemMessages[apiKey.id] && (
+                            <div className="mt-2">
+                              <p className={`text-sm ${itemMessages[apiKey.id].includes("Error") ? "text-red-600" : "text-green-600"}`}>
+                                {itemMessages[apiKey.id]}
+                              </p>
+                            </div>
+                          )}
+
                           {apiKey.is_default && (
-                            <p className="text-xs text-indigo-600 mt-1 flex items-center">
+                            <p className="text-xs text-indigo-600 mt-2 flex items-center">
                               <Check className="h-3 w-3 mr-1 fill-current" />
                               Default key for {config.name}
                             </p>
@@ -606,6 +851,14 @@ export function Settings({ onUpdate }: SettingsProps) {
                           Create {config.name} Key
                         </Button>
                       </div>
+                    </div>
+                  )}
+                  
+                  {itemMessages[`add-${service}`] && (
+                    <div className="mt-2">
+                      <p className={`text-sm ${itemMessages[`add-${service}`].includes("Error") ? "text-red-600" : "text-green-600"}`}>
+                        {itemMessages[`add-${service}`]}
+                      </p>
                     </div>
                   )}
                 </div>
@@ -693,6 +946,26 @@ export function Settings({ onUpdate }: SettingsProps) {
 
                     {editingAccount === account.id ? (
                       <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h5 className="font-medium text-gray-900">Edit WordPress Account</h5>
+                          <Button
+                            onClick={() => {
+                              setEditingAccount(null)
+                              // Clear any unsaved changes for this account
+                              setEditingWordPressAccounts(prev => {
+                                const newState = { ...prev }
+                                delete newState[account.id]
+                                return newState
+                              })
+                            }}
+                            variant="ghost"
+                            size="sm"
+                            className="text-gray-500 hover:text-gray-700"
+                          >
+                            <X className="h-4 w-4 mr-2" />
+                            Cancel
+                          </Button>
+                        </div>
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-1">Account Name</label>
                           <Input
@@ -749,6 +1022,17 @@ export function Settings({ onUpdate }: SettingsProps) {
                             Generate an application password in your WordPress admin under Users → Profile
                           </p>
                         </div>
+                        <div className="flex justify-end pt-2">
+                          <Button
+                            onClick={() => handleIndividualSave('wordPressAccount', account.id)}
+                            disabled={saving}
+                            size="sm"
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white disabled:bg-gray-400 disabled:cursor-not-allowed"
+                          >
+                            <Check className="h-4 w-4 mr-2" />
+                            {saving ? "Saving..." : "Save Changes"}
+                          </Button>
+                        </div>
                       </div>
                     ) : (
                       <div className="text-sm text-gray-600">
@@ -757,6 +1041,14 @@ export function Settings({ onUpdate }: SettingsProps) {
                         </p>
                         <p>
                           <span className="font-medium">Username:</span> {account.username || "Not configured"}
+                        </p>
+                      </div>
+                    )}
+                    
+                    {itemMessages[account.id] && (
+                      <div className="mt-2">
+                        <p className={`text-sm ${itemMessages[account.id].includes("Error") ? "text-red-600" : "text-green-600"}`}>
+                          {itemMessages[account.id]}
                         </p>
                       </div>
                     )}
@@ -839,28 +1131,23 @@ export function Settings({ onUpdate }: SettingsProps) {
                 </div>
               </div>
             )}
+            
+            {itemMessages['add-wordpress'] && (
+              <div className="mt-2">
+                <p className={`text-sm ${itemMessages['add-wordpress'].includes("Error") ? "text-red-600" : "text-green-600"}`}>
+                  {itemMessages['add-wordpress']}
+                </p>
+              </div>
+            )}
           </CardContent>
         </Card>
 
-        {/* Save Button */}
-        <div className="flex items-center justify-between">
-          <div>
-            {message && (
-              <p className={`text-sm ${message.includes("Error") ? "text-red-600" : "text-green-600"}`}>{message}</p>
-            )}
-            {hasUnsavedChanges && (
-              <p className="text-sm text-amber-600">You have unsaved changes. Click Save to apply them.</p>
-            )}
+        {/* Message Display */}
+        {message && (
+          <div className="mt-4">
+            <p className={`text-sm ${message.includes("Error") ? "text-red-600" : "text-green-600"}`}>{message}</p>
           </div>
-          <Button 
-            onClick={handleSave} 
-            disabled={saving || !hasUnsavedChanges} 
-            className="bg-gray-800 hover:bg-gray-700 text-white disabled:bg-gray-400 disabled:cursor-not-allowed"
-          >
-            <Check className="h-4 w-4 mr-2" />
-            {saving ? "Saving..." : "Save Settings"}
-          </Button>
-        </div>
+        )}
       </div>
     </div>
   )
