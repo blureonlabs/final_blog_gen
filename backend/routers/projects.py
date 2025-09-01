@@ -79,6 +79,7 @@ async def create_project(
         created_project = response.data[0]
         logger.info(f"Project created successfully: {created_project['id']}")
         
+        created_project = parse_serp_api_contents(created_project)
         return ProjectResponse(**created_project)
         
     except Exception as e:

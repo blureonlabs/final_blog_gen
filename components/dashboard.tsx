@@ -35,10 +35,17 @@ export function Dashboard({ user }: DashboardProps) {
   const [showProfileSettings, setShowProfileSettings] = useState(false) // Added state
   const [userData, setUserData] = useState<SupabaseUserData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [modalKey, setModalKey] = useState(0)
   const permissions = usePermissions()
   
   // Tab state for Projects view
   const [activeProjectsTab, setActiveProjectsTab] = useState<"active" | "completed" | "failed">("active")
+
+  // Function to open new project modal with fresh state
+  const openNewProjectModal = () => {
+    setModalKey(prev => prev + 1) // Increment key to force component remount
+    setShowNewProject(true)
+  }
 
   // Initialize view from URL on component mount and URL changes
   useEffect(() => {
@@ -396,7 +403,7 @@ export function Dashboard({ user }: DashboardProps) {
               </div>
               {permissions.canCreateProjects && (
                 <Button
-                  onClick={() => setShowNewProject(true)}
+                  onClick={openNewProjectModal}
                   className="bg-accent hover:bg-accent/90 text-accent-foreground shadow-sm px-6 py-2.5 rounded-lg font-medium"
                 >
                   <Plus className="h-4 w-4 mr-2" />
@@ -413,7 +420,7 @@ export function Dashboard({ user }: DashboardProps) {
                 <h3 className="text-xl font-semibold text-foreground mb-2">No projects yet</h3>
                 <p className="text-muted-foreground mb-6">Get started by creating your first blog generation project</p>
                 <Button
-                  onClick={() => setShowNewProject(true)}
+                  onClick={openNewProjectModal}
                   className="bg-accent hover:bg-accent/90 text-accent-foreground"
                 >
                   <Plus className="h-4 w-4 mr-2" />
@@ -521,7 +528,7 @@ export function Dashboard({ user }: DashboardProps) {
               </div>
               {permissions.canCreateProjects && (
                 <Button
-                  onClick={() => setShowNewProject(true)}
+                  onClick={openNewProjectModal}
                   className="bg-accent hover:bg-accent/90 text-accent-foreground shadow-sm px-6 py-2.5 rounded-lg font-medium"
                 >
                   <Plus className="h-4 w-4 mr-2" />
@@ -538,7 +545,7 @@ export function Dashboard({ user }: DashboardProps) {
                 <h3 className="text-xl font-semibold text-foreground mb-2">No projects yet</h3>
                 <p className="text-muted-foreground mb-6">Get started by creating your first blog generation project</p>
                 <Button
-                  onClick={() => setShowNewProject(true)}
+                  onClick={openNewProjectModal}
                   className="bg-accent hover:bg-accent/90 text-accent-foreground"
                 >
                   <Plus className="h-4 w-4 mr-2" />
@@ -717,7 +724,7 @@ export function Dashboard({ user }: DashboardProps) {
       {/* New Project Modal */}
       {showNewProject && userData && (
         <NewProjectModal
-          key={`new-project-modal-${showNewProject}`}
+          key={`new-project-modal-${modalKey}`}
           onClose={() => setShowNewProject(false)}
           onSuccess={async (newProject) => {
             setShowNewProject(false)

@@ -578,6 +578,12 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
           console.log("🔄 Research completed, stopping research started flag")
         }
         
+        // Auto-extract keywords when SerpAPI research is available but keywords are not
+        if (updatedProject.serp_api_contents && !updatedProject.extracted_seo_keywords && !isExtractingKeywords) {
+          console.log("🔄 Auto-extracting keywords from available research data...")
+          await extractKeywordsAutomatically(updatedProject.id)
+        }
+        
         // Force re-render if serp_api_contents changed
         if (project.serp_api_contents !== updatedProject.serp_api_contents) {
           console.log("🔄 SerpAPI contents updated, forcing re-render")
@@ -621,6 +627,52 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
       console.error("❌ Error refreshing project data:", error)
     } finally {
       setIsRefreshing(false)
+    }
+  }
+
+  const extractKeywordsAutomatically = async (projectId: string) => {
+    try {
+      console.log('🔄 Auto-extracting SEO keywords for project:', projectId);
+      setIsExtractingKeywords(true);
+      
+      const response = await fetch(`http://localhost:8000/api/projects/${projectId}/extract-seo-keywords`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json' 
+        }
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        console.log('✅ Auto-extracted SEO keywords successfully:', result);
+        
+        // Refresh project data to show the extracted keywords
+        await refreshProjectData();
+        
+        toast({
+          title: "Keywords Auto-Extracted",
+          description: "SEO keywords have been automatically extracted from research data.",
+        });
+      } else {
+        const errorText = await response.text();
+        console.error('❌ Auto keyword extraction failed:', response.status, response.statusText);
+        console.error('❌ Error details:', errorText);
+        
+        toast({
+          title: "Auto Keyword Extraction Failed",
+          description: `Failed to auto-extract keywords: ${response.statusText}`,
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error('❌ Error in auto keyword extraction:', error);
+      toast({
+        title: "Auto Keyword Extraction Error",
+        description: "An error occurred while auto-extracting keywords.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsExtractingKeywords(false);
     }
   }
 
@@ -1115,7 +1167,7 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
                       </h4>
                       <div className="flex gap-2">
 
-                        {project.serp_api_contents && !project.extracted_seo_keywords && (
+                        {project.serp_api_contents && !project.extracted_seo_keywords && !isExtractingKeywords && (
                           <Button
                             onClick={async () => {
                               try {
@@ -1213,6 +1265,14 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
                             )}
                           </Button>
                         )}
+                        
+                        {/* Auto-extraction loading indicator */}
+                        {project.serp_api_contents && !project.extracted_seo_keywords && isExtractingKeywords && (
+                          <div className="flex items-center gap-2 text-sm text-blue-600">
+                            <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                            <span>Auto-extracting keywords...</span>
+                          </div>
+                        )}
                       </div>
                     </div>
                     
@@ -1235,9 +1295,9 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
                     ) : (
                       <div className="text-center py-4">
                         <p className="text-gray-600">No SEO keywords extracted yet</p>
-                        {project.serp_api_contents && (
+                        {project.serp_api_contents && !project.extracted_seo_keywords && !isExtractingKeywords && (
                           <p className="text-xs text-gray-500 mt-1">
-                            Click "Extract Keywords" to extract SEO keywords from research data
+                            Keywords will be automatically extracted from research data, or click "Extract Keywords" to extract manually
                           </p>
                         )}
                       </div>
