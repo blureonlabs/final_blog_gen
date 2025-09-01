@@ -126,6 +126,7 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
     setLoading(false)
     setError("")
     setShowUpgradePrompt(false)
+    
     console.log("🔄 Form reset completed - SerpAPI:", false, "Enhanced Research:", false, "Generate Images:", false, "Num Images:", 1, "Fal AI:", false)
   }
 
@@ -133,13 +134,17 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
   useEffect(() => {
     // Reset form when component mounts
     console.log("🔄 Modal mounted - initializing form state")
+    console.log("🔄 Modal component instance created at:", new Date().toISOString())
     resetForm()
     
     return () => {
       console.log("🔄 Modal unmounting - cleaning up form state")
+      console.log("🔄 Modal component instance destroyed at:", new Date().toISOString())
       resetForm()
     }
   }, [])
+
+
 
   // Additional cleanup when modal is about to close
   const handleClose = () => {
@@ -181,6 +186,8 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
   const [error, setError] = useState("")
   const [showUpgradePrompt, setShowUpgradePrompt] = useState(false)
 
+
+
   // Safety check for userData.usage - provide default values if missing
   const safeUserData = {
     ...userData,
@@ -194,6 +201,58 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
 
   const remainingBlogs = safeUserData.usage.blogs_limit - safeUserData.usage.blogs_generated
   const isDemoMode = !process.env.NEXT_PUBLIC_SUPABASE_URL
+
+  // Auto-select required fields after form reset
+  useEffect(() => {
+    if (!isDemoMode && userData) {
+      console.log("🔄 Auto-selecting required fields...")
+      
+      // Auto-select first WordPress account if only one is available
+      if (userData.wordpressAccounts?.length === 1 && !selectedWordPressAccount) {
+        console.log("🔄 Auto-selecting single WordPress account:", userData.wordpressAccounts[0].id)
+        setSelectedWordPressAccount(userData.wordpressAccounts[0].id)
+      }
+      
+      // Auto-select first API keys if only one is available
+      if (userData.apiKeys) {
+        const openAIKeys = userData.apiKeys.filter(k => k.service === "openai")
+        const geminiKeys = userData.apiKeys.filter(k => k.service === "gemini")
+        const serpKeys = userData.apiKeys.filter(k => k.service === "serp")
+        const falKeys = userData.apiKeys.filter(k => k.service === "fal")
+        
+        if (openAIKeys.length === 1 && !selectedOpenAIKey) {
+          console.log("🔄 Auto-selecting single OpenAI key:", openAIKeys[0].id)
+          setSelectedOpenAIKey(openAIKeys[0].id)
+        }
+        if (geminiKeys.length === 1 && !selectedGeminiKey) {
+          console.log("🔄 Auto-selecting single Gemini key:", geminiKeys[0].id)
+          setSelectedGeminiKey(geminiKeys[0].id)
+        }
+        if (serpKeys.length === 1 && !selectedSerpKey) {
+          console.log("🔄 Auto-selecting single SERP key:", serpKeys[0].id)
+          setSelectedSerpKey(serpKeys[0].id)
+        }
+        if (falKeys.length === 1 && !selectedFalKey) {
+          console.log("🔄 Auto-selecting single Fal AI key:", falKeys[0].id)
+          setSelectedFalKey(falKeys[0].id)
+        }
+      }
+    }
+  }, [isDemoMode, userData, selectedWordPressAccount, selectedOpenAIKey, selectedGeminiKey, selectedSerpKey, selectedFalKey])
+
+  // Debug button state
+  useEffect(() => {
+    const buttonDisabled = loading || !name.trim() || !description.trim() || (!isDemoMode && !selectedWordPressAccount)
+    console.log("🔍 Button state check:", {
+      loading,
+      nameEmpty: !name.trim(),
+      descriptionEmpty: !description.trim(),
+      noWordPressAccount: !isDemoMode && !selectedWordPressAccount,
+      isDemoMode,
+      selectedWordPressAccount,
+      buttonDisabled
+    })
+  }, [loading, name, description, isDemoMode, selectedWordPressAccount])
 
   useEffect(() => {
     if (userData.wordpressAccounts.length > 0) {
@@ -227,6 +286,8 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    console.log("🚀 Form submission started at:", new Date().toISOString())
+    console.log("🔍 Current form state:", { name, description, numBlogs, loading })
     
     // Prevent multiple submissions
     if (loading) {
@@ -875,6 +936,17 @@ export function NewProjectModal({ onClose, onSuccess, userId, userData }: NewPro
                 type="submit"
                 disabled={loading || !name.trim() || !description.trim() || (!isDemoMode && !selectedWordPressAccount)}
                 className="flex-1 bg-gray-800 hover:bg-gray-700 text-white disabled:opacity-50"
+                onClick={() => {
+                  console.log("🔍 Submit button clicked")
+                  console.log("🔍 Button disabled state:", {
+                    loading,
+                    nameEmpty: !name.trim(),
+                    descriptionEmpty: !description.trim(),
+                    noWordPressAccount: !isDemoMode && !selectedWordPressAccount,
+                    isDemoMode,
+                    selectedWordPressAccount
+                  })
+                }}
               >
                 {loading ? "Creating..." : "Create Project"}
               </Button>

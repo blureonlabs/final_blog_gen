@@ -43,8 +43,14 @@ export function Dashboard({ user }: DashboardProps) {
 
   // Function to open new project modal with fresh state
   const openNewProjectModal = () => {
-    setModalKey(prev => prev + 1) // Increment key to force component remount
+    console.log("🔄 Opening new project modal, current modalKey:", modalKey)
+    setModalKey(prev => {
+      const newKey = prev + 1
+      console.log("🔄 Incrementing modalKey from", prev, "to", newKey)
+      return newKey
+    })
     setShowNewProject(true)
+    console.log("🔄 Modal should now be visible with key:", modalKey + 1)
   }
 
   // Initialize view from URL on component mount and URL changes

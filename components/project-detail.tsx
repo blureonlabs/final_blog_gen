@@ -69,7 +69,10 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
    useEffect(() => {
      let intervalId: NodeJS.Timeout | null = null
 
-     if (shouldAutoRefresh && (project?.status === 'in_progress' || generationStarted || researchStarted)) {
+     // Check if all blogs are already generated
+     const allBlogsGenerated = project && blogs.length >= project.num_blogs
+     
+     if (shouldAutoRefresh && (project?.status === 'in_progress' || generationStarted || researchStarted) && !allBlogsGenerated) {
        console.log("🔄 Starting auto-refresh interval...")
        console.log("🔍 Auto-refresh conditions:", {
          shouldAutoRefresh,
@@ -90,7 +93,7 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
          clearInterval(intervalId)
        }
      }
-   }, [shouldAutoRefresh, project?.status, project?.id, generationStarted, researchStarted, refreshInterval])
+   }, [shouldAutoRefresh, project?.status, project?.id, generationStarted, researchStarted, refreshInterval, blogs.length, project?.num_blogs])
 
    // Stop auto-refresh when project is completed or failed
    useEffect(() => {
@@ -102,6 +105,16 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
        setRefreshInterval(2000) // Reset to default interval
      }
    }, [project?.status])
+
+   // Stop auto-refresh when all blogs are generated
+   useEffect(() => {
+     if (project && blogs.length >= project.num_blogs && shouldAutoRefresh) {
+       console.log("🔄 All blogs generated, stopping auto-refresh via useEffect")
+       setShouldAutoRefresh(false)
+       setGenerationStarted(false)
+       setResearchStarted(false)
+     }
+   }, [blogs.length, project?.num_blogs, shouldAutoRefresh, project])
 
   // Debug effect to monitor project state changes
   useEffect(() => {
@@ -610,9 +623,27 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
       
       setLastRefreshTime(new Date())
       
-      // Gradually increase refresh interval as more blogs are generated
+      // Check if all blogs are generated and stop auto-refresh
       if (shouldAutoRefresh && project?.status === 'in_progress') {
         const currentBlogCount = blogs.length
+        const targetBlogCount = project.num_blogs
+        
+        console.log("🔍 Blog generation progress:", {
+          currentBlogCount,
+          targetBlogCount,
+          isComplete: currentBlogCount >= targetBlogCount
+        })
+        
+        // Stop auto-refresh if all blogs are generated
+        if (currentBlogCount >= targetBlogCount) {
+          console.log("🔄 All blogs generated, stopping auto-refresh")
+          setShouldAutoRefresh(false)
+          setGenerationStarted(false)
+          setResearchStarted(false)
+          return
+        }
+        
+        // Gradually increase refresh interval as more blogs are generated
         if (currentBlogCount < 3) {
           setRefreshInterval(1000) // 1 second for first few blogs
         } else if (currentBlogCount < 10) {
