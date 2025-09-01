@@ -11,7 +11,7 @@ import { Settings } from "@/components/settings"
 import { Logs } from "@/components/logs"
 import { AdminPanel } from "@/components/admin-panel"
 
-import { Plus, LogOut, User as UserIcon, Settings as SettingsIcon, Shield, RefreshCw } from "lucide-react"
+import { Plus, LogOut, User as UserIcon, Settings as SettingsIcon, Shield, RefreshCw, FileText } from "lucide-react"
 
 import { supabaseApi, type UserData as SupabaseUserData, type Project } from "@/lib/supabase-api"
 import { authManager, type User } from "@/lib/auth"
@@ -36,6 +36,9 @@ export function Dashboard({ user }: DashboardProps) {
   const [userData, setUserData] = useState<SupabaseUserData | null>(null)
   const [loading, setLoading] = useState(true)
   const permissions = usePermissions()
+  
+  // Tab state for Projects view
+  const [activeProjectsTab, setActiveProjectsTab] = useState<"active" | "completed" | "failed">("active")
 
   // Initialize view from URL on component mount and URL changes
   useEffect(() => {
@@ -230,6 +233,12 @@ export function Dashboard({ user }: DashboardProps) {
   const handleViewChange = (view: "dashboard" | "projects" | "project" | "settings" | "logs" | "admin") => {
     setActiveView(view)
     updateUrl(view, view === "project" ? selectedProjectId : null)
+    
+    // Reset projects tab to active when switching to projects view
+    if (view === "projects") {
+      setActiveProjectsTab("active")
+    }
+    
     // Only log admin access for security tracking
     if (view === "admin" && permissions.isAdmin) {
       supabaseLogger.info("user", "Admin accessed admin panel")
@@ -589,10 +598,48 @@ export function Dashboard({ user }: DashboardProps) {
                   </div>
                 </div>
 
+                {/* Projects Tabs */}
+                <div className="mb-6">
+                  <div className="border-b border-gray-200">
+                    <nav className="-mb-px flex space-x-8">
+                      <button
+                        onClick={() => setActiveProjectsTab("active")}
+                        className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                          activeProjectsTab === "active"
+                            ? "border-blue-500 text-blue-600"
+                            : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                        }`}
+                      >
+                        Active Projects ({activeProjects.length})
+                      </button>
+                      <button
+                        onClick={() => setActiveProjectsTab("completed")}
+                        className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                          activeProjectsTab === "completed"
+                            ? "border-blue-500 text-blue-600"
+                            : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                        }`}
+                      >
+                        Completed Projects ({completedProjects.length})
+                      </button>
+                      <button
+                        onClick={() => setActiveProjectsTab("failed")}
+                        className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                          activeProjectsTab === "failed"
+                            ? "border-blue-500 text-blue-600"
+                            : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                        }`}
+                      >
+                        Failed Projects ({failedProjects.length})
+                      </button>
+                    </nav>
+                  </div>
+                </div>
+
+                {/* Tab Content */}
                 <div className="space-y-8">
-                  {activeProjects.length > 0 && (
+                  {activeProjectsTab === "active" && activeProjects.length > 0 && (
                    <div>
-                     <h3 className="text-xl font-semibold text-foreground mb-6">Active Projects ({activeProjects.length})</h3>
                      <p className="text-sm text-muted-foreground mb-4">
                        Projects that are in progress, partially generated, or ready to start
                      </p>
@@ -600,9 +647,8 @@ export function Dashboard({ user }: DashboardProps) {
                    </div>
                  )}
 
-                 {completedProjects.length > 0 && (
+                                   {activeProjectsTab === "completed" && completedProjects.length > 0 && (
                    <div>
-                     <h3 className="text-xl font-semibold text-foreground mb-6">Completed Projects ({completedProjects.length})</h3>
                      <p className="text-sm text-muted-foreground mb-4">
                        Projects where all blogs have been generated and published to WordPress
                      </p>
@@ -610,15 +656,35 @@ export function Dashboard({ user }: DashboardProps) {
                    </div>
                  )}
 
-                 {failedProjects.length > 0 && (
+                                   {activeProjectsTab === "failed" && failedProjects.length > 0 && (
                    <div>
-                     <h3 className="text-xl font-semibold text-foreground mb-6">Failed Projects ({failedProjects.length})</h3>
                      <p className="text-sm text-muted-foreground mb-4">
                        Projects that encountered errors during blog generation
                      </p>
                      <ProjectList projects={failedProjects} loading={false} onProjectSelect={handleProjectSelect} onResume={handleResume} />
                    </div>
                  )}
+
+                 {/* Show message when no projects in selected tab */}
+                 {((activeProjectsTab === "active" && activeProjects.length === 0) ||
+                   (activeProjectsTab === "completed" && completedProjects.length === 0) ||
+                   (activeProjectsTab === "failed" && failedProjects.length === 0)) && (
+                   <div className="text-center py-16">
+                     <div className="bg-muted/50 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
+                       <FileText className="h-8 w-8 text-muted-foreground" />
+                     </div>
+                     <h3 className="text-xl font-semibold text-foreground mb-2">
+                       No {activeProjectsTab} projects
+                     </h3>
+                     <p className="text-muted-foreground mb-6">
+                       {activeProjectsTab === "active" && "All your projects are either completed or failed."}
+                       {activeProjectsTab === "completed" && "No projects have been completed yet."}
+                       {activeProjectsTab === "failed" && "Great! No projects have failed."}
+                     </p>
+                   </div>
+                 )}
+
+
                 </div>
               </>
             )}
