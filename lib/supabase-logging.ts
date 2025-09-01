@@ -67,7 +67,7 @@ class SupabaseLogger {
     }
   }
 
-  async getLogs(limit: number = 100) {
+  async getLogs(limit: number = 50, offset: number = 0) {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       
@@ -80,7 +80,7 @@ class SupabaseLogger {
         .select('*')
         .eq('user_id', user.id)
         .order('timestamp', { ascending: false })
-        .limit(limit)
+        .range(offset, offset + limit - 1)
 
       if (error) {
         throw error
@@ -90,6 +90,30 @@ class SupabaseLogger {
     } catch (error) {
       console.error('Error fetching logs:', error)
       return []
+    }
+  }
+
+  async getLogsCount() {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      
+      if (!user) {
+        throw new Error('No authenticated user')
+      }
+
+      const { count, error } = await supabase
+        .from('activity_logs')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+
+      if (error) {
+        throw error
+      }
+
+      return count || 0
+    } catch (error) {
+      console.error('Error fetching logs count:', error)
+      return 0
     }
   }
 

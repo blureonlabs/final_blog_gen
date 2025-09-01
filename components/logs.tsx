@@ -7,92 +7,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Download, Trash2, RefreshCw, Hash, Calendar, User, Settings, AlertCircle, CheckCircle, Clock } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { memo } from "react"
 
-export function Logs() {
-  const [logs, setLogs] = useState<LogEntry[]>([])
-  const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
-  const { toast } = useToast()
-
-  useEffect(() => {
-    loadLogs()
-  }, [])
-
-  const loadLogs = async () => {
-    try {
-      setLoading(true)
-      const allLogs = await supabaseLogger.getLogs()
-      setLogs(allLogs || [])
-    } catch (error) {
-      console.error("Error loading logs:", error)
-      toast({
-        title: "Error",
-        description: "Failed to load logs",
-        variant: "destructive",
-      })
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleRefresh = async () => {
-    setRefreshing(true)
-    await loadLogs()
-    setRefreshing(false)
-    toast({
-      title: "Success",
-      description: "Logs refreshed",
-    })
-  }
-
-  const handleExport = async () => {
-    try {
-      const csvContent = await supabaseLogger.exportLogs()
-      if (csvContent) {
-        const blob = new Blob([csvContent], { type: "text/csv" })
-        const url = window.URL.createObjectURL(blob)
-        const a = document.createElement("a")
-        a.href = url
-        a.download = `activity-logs-${new Date().toISOString().split("T")[0]}.csv`
-        a.click()
-        window.URL.revokeObjectURL(url)
-        toast({
-          title: "Success",
-          description: "Logs exported successfully",
-        })
-      }
-    } catch (error) {
-      console.error("Error exporting logs:", error)
-      toast({
-        title: "Error",
-        description: "Failed to export logs",
-        variant: "destructive",
-      })
-    }
-  }
-
-  const handleClear = async () => {
-    if (confirm("Are you sure you want to clear all logs? This action cannot be undone.")) {
-      try {
-        const success = await supabaseLogger.clearLogs()
-        if (success) {
-          setLogs([])
-          toast({
-            title: "Success",
-            description: "All logs cleared",
-          })
-        }
-      } catch (error) {
-        console.error("Error clearing logs:", error)
-        toast({
-          title: "Error",
-          description: "Failed to clear logs",
-          variant: "destructive",
-        })
-      }
-    }
-  }
-
+// Memoized LogCard component for better performance
+const LogCard = memo(({ log }: { log: LogEntry }) => {
   const getLevelColor = (level: string) => {
     switch (level) {
       case "error":
@@ -160,7 +78,7 @@ export function Logs() {
           >
             {value}
           </a>
-          )
+        )
       }
       if (value.length > 100) {
         return (
@@ -173,6 +91,244 @@ export function Logs() {
     }
     return String(value)
   }
+
+  return (
+    <Card className={`hover:shadow-md transition-shadow border-l-4 ${
+      log.level === 'error' ? 'border-l-red-500 bg-red-50/30' :
+      log.level === 'warning' ? 'border-l-yellow-500 bg-yellow-50/30' :
+      log.level === 'info' ? 'border-l-blue-500 bg-blue-50/30' :
+      'border-l-gray-500 bg-gray-50/30'
+    }`}>
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between">
+          <div className="flex-1 space-y-2">
+            <div className="flex items-center gap-2">
+              <Badge variant={getLevelColor(log.level)} className="text-xs">
+                {log.level.toUpperCase()}
+              </Badge>
+              <Badge className={`text-xs ${getCategoryColor(log.category)}`}>
+                {log.category}
+              </Badge>
+              <span className="text-sm text-muted-foreground">
+                {new Date(log.timestamp || "").toLocaleString()}
+              </span>
+            </div>
+            <p className="text-sm font-medium text-foreground">{log.action}</p>
+            {log.metadata && Object.keys(log.metadata).length > 0 && (
+              <div className="text-xs text-muted-foreground bg-white/80 p-4 rounded-lg border shadow-sm">
+                <div className="font-medium mb-3 text-foreground flex items-center gap-2">
+                  <span className="text-blue-600">📋</span>
+                  <span>Details</span>
+                </div>
+                <div className="space-y-3">
+                  {Object.entries(log.metadata).map(([key, value]) => {
+                    // Skip if value is null, undefined, or empty
+                    if (value === null || value === undefined || value === "") return null;
+                    
+                    // Handle different value types
+                    if (typeof value === "object" && value !== null) {
+                      // If it's a details object, render its contents
+                      if (key === "details") {
+                        return (
+                          <div key={key} className="space-y-1">
+                            {Object.entries(value).map(([detailKey, detailValue]) => {
+                              if (detailValue === null || detailValue === undefined || detailValue === "") return null;
+                              return (
+                                <div key={detailKey} className="flex items-start gap-2">
+                                  <div className="flex items-center gap-2 min-w-[90px]">
+                                    <span className="text-muted-foreground">
+                                      {getMetadataIcon(detailKey)}
+                                    </span>
+                                    <span className="font-medium text-foreground capitalize">
+                                      {detailKey.replace(/_/g, " ")}:
+                                    </span>
+                                  </div>
+                                  <span className={`flex-1 ${getValueColor(detailKey, detailValue)}`}>
+                                    {formatValue(detailKey, detailValue)}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      } else {
+                        // For other objects, show as key-value pairs
+                        return (
+                          <div key={key} className="space-y-1">
+                            <div className="font-medium text-foreground capitalize mb-1">
+                              {key.replace(/_/g, " ")}:
+                            </div>
+                            {Object.entries(value).map(([objKey, objValue]) => {
+                              if (objValue === null || objValue === undefined || objValue === "") return null;
+                              return (
+                                <div key={objKey} className="flex items-start gap-2 ml-4">
+                                  <div className="flex items-center gap-2 min-w-[70px]">
+                                    <span className="text-muted-foreground">
+                                      {getMetadataIcon(objKey)}
+                                    </span>
+                                    <span className="font-medium text-muted-foreground capitalize">
+                                      {objKey.replace(/_/g, " ")}:
+                                    </span>
+                                  </div>
+                                  <span className={`flex-1 ${getValueColor(objKey, objValue)}`}>
+                                    {formatValue(objKey, objValue)}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      }
+                    } else {
+                      // Simple key-value pairs
+                      return (
+                        <div key={key} className="flex items-start gap-2">
+                          <div className="flex items-center gap-2 min-w-[90px]">
+                            <span className="text-muted-foreground">
+                              {getMetadataIcon(key)}
+                            </span>
+                            <span className="font-medium text-foreground capitalize">
+                              {key.replace(/_/g, " ")}:
+                            </span>
+                          </div>
+                          <span className={`flex-1 ${getValueColor(key, value)}`}>
+                            {formatValue(key, value)}
+                          </span>
+                        </div>
+                      );
+                    }
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+})
+
+LogCard.displayName = 'LogCard'
+
+export function Logs() {
+  const [logs, setLogs] = useState<LogEntry[]>([])
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [hasMore, setHasMore] = useState(true)
+  const [totalCount, setTotalCount] = useState(0)
+  const [currentPage, setCurrentPage] = useState(0)
+  const { toast } = useToast()
+
+  const LOGS_PER_PAGE = 20
+
+  useEffect(() => {
+    loadLogs(true)
+  }, [])
+
+  const loadLogs = async (reset = false) => {
+    try {
+      if (reset) {
+        setLoading(true)
+        setCurrentPage(0)
+        setLogs([])
+      } else {
+        setLoadingMore(true)
+      }
+
+      const offset = reset ? 0 : currentPage * LOGS_PER_PAGE
+      const [newLogs, count] = await Promise.all([
+        supabaseLogger.getLogs(LOGS_PER_PAGE, offset),
+        reset ? supabaseLogger.getLogsCount() : Promise.resolve(totalCount)
+      ])
+
+      if (reset) {
+        setLogs(newLogs || [])
+        setTotalCount(count)
+      } else {
+        setLogs(prev => [...prev, ...(newLogs || [])])
+      }
+
+      setHasMore((newLogs?.length || 0) === LOGS_PER_PAGE)
+      setCurrentPage(prev => prev + 1)
+    } catch (error) {
+      console.error("Error loading logs:", error)
+      toast({
+        title: "Error",
+        description: "Failed to load logs",
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
+      setLoadingMore(false)
+    }
+  }
+
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    await loadLogs(true)
+    setRefreshing(false)
+    toast({
+      title: "Success",
+      description: "Logs refreshed",
+    })
+  }
+
+  const handleLoadMore = () => {
+    if (!loadingMore && hasMore) {
+      loadLogs(false)
+    }
+  }
+
+  const handleExport = async () => {
+    try {
+      const csvContent = await supabaseLogger.exportLogs()
+      if (csvContent) {
+        const blob = new Blob([csvContent], { type: "text/csv" })
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement("a")
+        a.href = url
+        a.download = `activity-logs-${new Date().toISOString().split("T")[0]}.csv`
+        a.click()
+        window.URL.revokeObjectURL(url)
+        toast({
+          title: "Success",
+          description: "Logs exported successfully",
+        })
+      }
+    } catch (error) {
+      console.error("Error exporting logs:", error)
+      toast({
+        title: "Error",
+        description: "Failed to export logs",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleClear = async () => {
+    if (confirm("Are you sure you want to clear all logs? This action cannot be undone.")) {
+      try {
+        const success = await supabaseLogger.clearLogs()
+        if (success) {
+          setLogs([])
+          toast({
+            title: "Success",
+            description: "All logs cleared",
+          })
+        }
+      } catch (error) {
+        console.error("Error clearing logs:", error)
+        toast({
+          title: "Error",
+          description: "Failed to clear logs",
+          variant: "destructive",
+        })
+      }
+    }
+  }
+
+
 
   if (loading) {
     return (
@@ -189,6 +345,11 @@ export function Logs() {
           <h2 className="text-3xl font-bold text-foreground">Activity Logs</h2>
           <p className="text-lg text-muted-foreground">
             View and manage your application activity logs
+            {totalCount > 0 && (
+              <span className="ml-2 text-sm bg-muted px-2 py-1 rounded">
+                {totalCount} total logs
+              </span>
+            )}
           </p>
         </div>
         <div className="flex gap-2">
@@ -227,119 +388,30 @@ export function Logs() {
       ) : (
         <div className="space-y-4">
           {logs.map((log, index) => (
-                         <Card key={index} className={`hover:shadow-md transition-shadow border-l-4 ${
-               log.level === 'error' ? 'border-l-red-500 bg-red-50/30' :
-               log.level === 'warning' ? 'border-l-yellow-500 bg-yellow-50/30' :
-               log.level === 'info' ? 'border-l-blue-500 bg-blue-50/30' :
-               'border-l-gray-500 bg-gray-50/30'
-             }`}>
-               <CardContent className="p-4">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <Badge variant={getLevelColor(log.level)} className="text-xs">
-                        {log.level.toUpperCase()}
-                      </Badge>
-                      <Badge className={`text-xs ${getCategoryColor(log.category)}`}>
-                        {log.category}
-                      </Badge>
-                      <span className="text-sm text-muted-foreground">
-                        {new Date(log.timestamp || "").toLocaleString()}
-                      </span>
-                    </div>
-                                         <p className="text-sm font-medium text-foreground">{log.action}</p>
-                     {log.metadata && Object.keys(log.metadata).length > 0 && (
-                       <div className="text-xs text-muted-foreground bg-white/80 p-4 rounded-lg border shadow-sm">
-                         <div className="font-medium mb-3 text-foreground flex items-center gap-2">
-                           <span className="text-blue-600">📋</span>
-                           <span>Details</span>
-                         </div>
-                         <div className="space-y-3">
-                           {Object.entries(log.metadata).map(([key, value]) => {
-                             // Skip if value is null, undefined, or empty
-                             if (value === null || value === undefined || value === "") return null;
-                             
-                             // Handle different value types
-                             if (typeof value === "object" && value !== null) {
-                               // If it's a details object, render its contents
-                               if (key === "details") {
-                                 return (
-                                   <div key={key} className="space-y-1">
-                                     {Object.entries(value).map(([detailKey, detailValue]) => {
-                                       if (detailValue === null || detailValue === undefined || detailValue === "") return null;
-                                       return (
-                                         <div key={detailKey} className="flex items-start gap-2">
-                                                                              <div className="flex items-center gap-2 min-w-[90px]">
-                                     <span className="text-muted-foreground">
-                                       {getMetadataIcon(detailKey)}
-                                     </span>
-                                     <span className="font-medium text-foreground capitalize">
-                                       {detailKey.replace(/_/g, " ")}:
-                                     </span>
-                                   </div>
-                                           <span className={`flex-1 ${getValueColor(detailKey, detailValue)}`}>
-                                             {formatValue(detailKey, detailValue)}
-                                           </span>
-                                         </div>
-                                       );
-                                     })}
-                                   </div>
-                                 );
-                               } else {
-                                 // For other objects, show as key-value pairs
-                                 return (
-                                   <div key={key} className="space-y-1">
-                                     <div className="font-medium text-foreground capitalize mb-1">
-                                       {key.replace(/_/g, " ")}:
-                                     </div>
-                                     {Object.entries(value).map(([objKey, objValue]) => {
-                                       if (objValue === null || objValue === undefined || objValue === "") return null;
-                                       return (
-                                         <div key={objKey} className="flex items-start gap-2 ml-4">
-                                           <div className="flex items-center gap-2 min-w-[70px]">
-                                             <span className="text-muted-foreground">
-                                               {getMetadataIcon(objKey)}
-                                             </span>
-                                             <span className="font-medium text-muted-foreground capitalize">
-                                               {objKey.replace(/_/g, " ")}:
-                                             </span>
-                                           </div>
-                                           <span className={`flex-1 ${getValueColor(objKey, objValue)}`}>
-                                             {formatValue(objKey, objValue)}
-                                           </span>
-                                         </div>
-                                       );
-                                     })}
-                                   </div>
-                                 );
-                               }
-                             } else {
-                               // Simple key-value pairs
-                               return (
-                                 <div key={key} className="flex items-start gap-2">
-                                   <div className="flex items-center gap-2 min-w-[90px]">
-                                     <span className="text-muted-foreground">
-                                       {getMetadataIcon(key)}
-                                     </span>
-                                     <span className="font-medium text-foreground capitalize">
-                                       {key.replace(/_/g, " ")}:
-                                     </span>
-                                   </div>
-                                   <span className={`flex-1 ${getValueColor(key, value)}`}>
-                                     {formatValue(key, value)}
-                                   </span>
-                                 </div>
-                               );
-                             }
-                           })}
-                         </div>
-                       </div>
-                     )}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+            <LogCard key={log.id || index} log={log} />
           ))}
+          
+          {hasMore && (
+            <div className="flex justify-center py-4">
+              <Button
+                onClick={handleLoadMore}
+                disabled={loadingMore}
+                variant="outline"
+                size="sm"
+              >
+                {loadingMore ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                    Loading...
+                  </>
+                ) : (
+                  <>
+                    Load More ({totalCount - logs.length} remaining)
+                  </>
+                )}
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </div>

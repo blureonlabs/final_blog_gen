@@ -17,6 +17,7 @@ import {
 import { ArrowLeft, FileText, Eye, ExternalLink, Clock, CheckCircle, XCircle, Upload, RotateCcw, Search } from "lucide-react"
 import { storage, type Project, type Blog } from "@/lib/storage"
 import { ContentGenerationModal } from "@/components/content-generation-modal"
+import { useToast } from "@/hooks/use-toast"
 
 interface ProjectDetailProps {
   projectId: string
@@ -35,6 +36,14 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
   const [blogToPublish, setBlogToPublish] = useState<Blog | null>(null)
      const [isGeneratingContent, setIsGeneratingContent] = useState(false)
    const [shouldAutoRefresh, setShouldAutoRefresh] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(null)
+  const [generationStarted, setGenerationStarted] = useState(false)
+  const [isExtractingKeywords, setIsExtractingKeywords] = useState(false)
+  const [keywordsExtractionStarted, setKeywordsExtractionStarted] = useState(false)
+  const [researchStarted, setResearchStarted] = useState(false)
+  const [refreshInterval, setRefreshInterval] = useState(2000)
+  const { toast } = useToast()
    
    // Pagination state
    const [currentPage, setCurrentPage] = useState(1)
@@ -50,8 +59,60 @@ export function ProjectDetail({ projectId, project: initialProject, onBack, onUp
        loadProjectData(initialProject)
        // Reset auto-refresh flag when project changes
        setShouldAutoRefresh(false)
+       setGenerationStarted(false)
+       setResearchStarted(false)
+       setRefreshInterval(2000) // Reset to default interval
      }
    }, [initialProject])
+
+   // Auto-refresh effect
+   useEffect(() => {
+     let intervalId: NodeJS.Timeout | null = null
+
+     if (shouldAutoRefresh && (project?.status === 'in_progress' || generationStarted || researchStarted)) {
+       console.log("🔄 Starting auto-refresh interval...")
+       console.log("🔍 Auto-refresh conditions:", {
+         shouldAutoRefresh,
+         projectStatus: project?.status,
+         generationStarted,
+         keywordsExtractionStarted,
+         refreshInterval
+       })
+       intervalId = setInterval(async () => {
+         console.log("🔄 Auto-refresh triggered")
+         await refreshProjectData()
+       }, refreshInterval) // Use dynamic refresh interval
+     }
+
+     return () => {
+       if (intervalId) {
+         console.log("🔄 Clearing auto-refresh interval")
+         clearInterval(intervalId)
+       }
+     }
+   }, [shouldAutoRefresh, project?.status, project?.id, generationStarted, researchStarted, refreshInterval])
+
+   // Stop auto-refresh when project is completed or failed
+   useEffect(() => {
+     if (project?.status === 'completed' || project?.status === 'failed') {
+       console.log("🔄 Project completed/failed, stopping auto-refresh")
+       setShouldAutoRefresh(false)
+       setGenerationStarted(false)
+       setResearchStarted(false)
+       setRefreshInterval(2000) // Reset to default interval
+     }
+   }, [project?.status])
+
+  // Debug effect to monitor project state changes
+  useEffect(() => {
+    console.log("🔍 Project state changed:")
+    console.log("🔍 Project ID:", project?.id)
+    console.log("🔍 Project status:", project?.status)
+    console.log("🔍 Project serp_api_on:", project?.serp_api_on)
+    console.log("🔍 Project serp_api_contents:", project?.serp_api_contents)
+    console.log("🔍 Project serp_api_contents type:", typeof project?.serp_api_contents)
+    console.log("🔍 Project serp_api_contents keys:", project?.serp_api_contents ? Object.keys(project.serp_api_contents) : "null")
+  }, [project])
 
   const loadProjectData = async (foundProject: Project) => {
     console.log("🚀 loadProjectData called with project:", foundProject)
@@ -470,6 +531,99 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
     }
   }
 
+  const refreshProjectData = async () => {
+    if (!project) return;
+    
+    try {
+      setIsRefreshing(true)
+      console.log("🔄 Refreshing project data...")
+      
+      // Refresh project status
+      console.log("🔍 Fetching project data from:", `http://localhost:8000/api/projects/${project.id}`)
+      const projectResponse = await fetch(`http://localhost:8000/api/projects/${project.id}`)
+      console.log("🔍 Project response status:", projectResponse.status)
+      console.log("🔍 Project response ok:", projectResponse.ok)
+      if (projectResponse.ok) {
+        const backendProject = await projectResponse.json()
+        console.log("🔍 Backend project data:", backendProject)
+        console.log("🔍 Backend extracted_seo_keywords:", backendProject.extracted_seo_keywords)
+        console.log("🔍 Backend serp_api_contents:", backendProject.serp_api_contents)
+        console.log("🔍 Backend serp_api_contents type:", typeof backendProject.serp_api_contents)
+        console.log("🔍 Backend serp_api_contents keys:", backendProject.serp_api_contents ? Object.keys(backendProject.serp_api_contents) : "null")
+        console.log("🔍 Current project serp_api_contents:", project.serp_api_contents)
+        console.log("🔍 Current project serp_api_contents type:", typeof project.serp_api_contents)
+        
+        const updatedProject = {
+          ...project,
+          ...backendProject,
+          id: backendProject.id,
+          status: backendProject.status || project.status,
+          updated_at: backendProject.updated_at || project.updated_at,
+          // Explicitly ensure serp_api_contents is included
+          serp_api_contents: backendProject.serp_api_contents,
+          serp_api_on: backendProject.serp_api_on
+        }
+        setProject(updatedProject)
+        console.log("✅ Project data refreshed")
+        console.log("🔍 Updated project extracted_seo_keywords:", updatedProject.extracted_seo_keywords)
+        console.log("🔍 Updated project serp_api_contents:", updatedProject.serp_api_contents)
+        console.log("🔍 Updated project serp_api_contents type:", typeof updatedProject.serp_api_contents)
+        console.log("🔍 Updated project serp_api_contents keys:", updatedProject.serp_api_contents ? Object.keys(updatedProject.serp_api_contents) : "null")
+        console.log("🔍 Updated project serp_api_on:", updatedProject.serp_api_on)
+        console.log("🔍 Updated project status:", updatedProject.status)
+        
+        // Stop research started flag when research is completed
+        if (researchStarted && updatedProject.serp_api_contents) {
+          setResearchStarted(false)
+          console.log("🔄 Research completed, stopping research started flag")
+        }
+        
+        // Force re-render if serp_api_contents changed
+        if (project.serp_api_contents !== updatedProject.serp_api_contents) {
+          console.log("🔄 SerpAPI contents updated, forcing re-render")
+          console.log("🔍 Old serp_api_contents:", project.serp_api_contents)
+          console.log("🔍 New serp_api_contents:", updatedProject.serp_api_contents)
+          
+          // Force a re-render by updating a dummy state
+          setLastRefreshTime(new Date())
+        }
+        
+        // Force re-render if keywords changed
+        if (project.extracted_seo_keywords !== updatedProject.extracted_seo_keywords) {
+          console.log("🔄 Keywords updated, forcing re-render")
+          console.log("🔍 Old keywords:", project.extracted_seo_keywords)
+          console.log("🔍 New keywords:", updatedProject.extracted_seo_keywords)
+          console.log("🔍 New keywords length:", updatedProject.extracted_seo_keywords?.length)
+        } else {
+          console.log("🔍 Keywords unchanged:", updatedProject.extracted_seo_keywords)
+        }
+      }
+      
+      // Refresh blog list
+      await refreshBlogList()
+      
+      setLastRefreshTime(new Date())
+      
+      // Gradually increase refresh interval as more blogs are generated
+      if (shouldAutoRefresh && project?.status === 'in_progress') {
+        const currentBlogCount = blogs.length
+        if (currentBlogCount < 3) {
+          setRefreshInterval(1000) // 1 second for first few blogs
+        } else if (currentBlogCount < 10) {
+          setRefreshInterval(2000) // 2 seconds for next few blogs
+        } else {
+          setRefreshInterval(3000) // 3 seconds for remaining blogs
+        }
+      }
+      
+
+    } catch (error) {
+      console.error("❌ Error refreshing project data:", error)
+    } finally {
+      setIsRefreshing(false)
+    }
+  }
+
   const refreshBlogList = async () => {
     if (!project) return;
     
@@ -513,48 +667,7 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
     setCurrentPage(newPage)
   }
 
-  const handleRefreshResearch = async () => {
-    if (!project?.id) {
-      alert("No project ID available. Please refresh the page and try again.")
-      return
-    }
-    
-    try {
-      console.log("🔄 Refreshing research for project:", project.id)
-      
-      const response = await fetch(`http://localhost:8000/api/content-generation/refresh-research`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          project_id: project.id,
-          force_refresh: true
-        }),
-      })
-      
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.detail || `HTTP ${response.status}`)
-      }
-      
-      const result = await response.json()
-      
-      if (result.refreshed) {
-        console.log("✅ Research refreshed successfully")
-        alert("Research refreshed successfully! The project now has updated research data.")
-        // Refresh the project data to show updated research
-        loadProjectData(project)
-      } else {
-        console.log("ℹ️ Research is still fresh, no refresh needed")
-        alert("Research is still fresh and up-to-date. No refresh needed.")
-      }
-      
-    } catch (error: any) {
-      console.error("❌ Error refreshing research:", error)
-      alert(`Failed to refresh research: ${error.message}`)
-    }
-  }
+
 
   const handleStartContentGeneration = async () => {
     console.log("[v0] Starting content generation...")
@@ -592,6 +705,13 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
     
     // Set generating state to prevent duplicate requests
     setIsGeneratingContent(true)
+    
+    // Start auto-refresh immediately when generation begins
+    setShouldAutoRefresh(true)
+    setGenerationStarted(true)
+    setResearchStarted(true) // Research starts when content generation begins
+    setRefreshInterval(1000) // Start with 1 second intervals for faster updates
+    console.log("🚀 Auto-refresh started immediately for content generation...")
     
     try {
       // First, verify the project exists in the database
@@ -658,17 +778,60 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
              // Update project status to show it's in progress
        setProject(prev => prev ? { ...prev, status: 'in_progress' } : null)
        
-       // Start auto-refresh immediately
-       setShouldAutoRefresh(true)
-       console.log("🚀 Auto-refresh started for content generation...")
+       // Show success toast
+       toast({
+         title: "Content Generation Started",
+         description: "Blogs are now being generated and will appear below as they're completed.",
+       })
        
-       // Show success message
-       alert("Content generation started successfully! Check the logs for progress.")
+       // Start immediate refresh to show blogs as they're generated
+       setTimeout(() => {
+         console.log("🔄 Content generation refresh 1 (500ms)")
+         refreshProjectData()
+       }, 500) // Refresh after 500ms to catch initial blogs
+       
+       // Additional immediate refresh after 2 seconds
+       setTimeout(() => {
+         console.log("🔄 Content generation refresh 2 (2s)")
+         refreshProjectData()
+       }, 2000)
+       
+       // Another refresh after 4 seconds to catch early blogs
+       setTimeout(() => {
+         console.log("🔄 Content generation refresh 3 (4s)")
+         refreshProjectData()
+       }, 4000)
+       
+       // Additional refreshes for research completion
+       setTimeout(() => {
+         console.log("🔄 Research completion refresh 1 (6s)")
+         refreshProjectData()
+       }, 6000) // Refresh after 6 seconds
+       
+       setTimeout(() => {
+         console.log("🔄 Research completion refresh 2 (10s)")
+         refreshProjectData()
+       }, 10000) // Refresh after 10 seconds
+       
+       setTimeout(() => {
+         console.log("🔄 Research completion refresh 3 (15s)")
+         refreshProjectData()
+       }, 15000) // Refresh after 15 seconds
       
     } catch (error) {
       console.error("❌ Error starting content generation:", error)
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
-      alert(`Failed to start content generation: ${errorMessage}`)
+      
+      // Stop auto-refresh if generation fails
+      setShouldAutoRefresh(false)
+      setGenerationStarted(false)
+      setResearchStarted(false)
+      
+      toast({
+        title: "Generation Failed",
+        description: `Failed to start content generation: ${errorMessage}`,
+        variant: "destructive",
+      })
     } finally {
       // Always reset the generating state
       setIsGeneratingContent(false)
@@ -813,61 +976,49 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
           <Button
             onClick={(e) => {
               e.preventDefault()
-              loadProjectData(project)
+              refreshProjectData()
             }}
             variant="outline"
             size="sm"
+            disabled={isRefreshing}
             className="border-gray-300 text-gray-600 hover:bg-gray-50"
             title="Refresh content"
           >
-            <Clock className="h-4 w-4 mr-2" />
-            Refresh
+            <Clock className={`h-4 w-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
+            {isRefreshing ? 'Refreshing...' : 'Refresh'}
           </Button>
 
           {/* Start Content Generation Button */}
-          {(project.status === "pending" || project.status === "in_progress" || project.status === "ready") && (
+          {(((project.status === "pending" || project.status === "ready") && blogs.length === 0) || 
+           (project.status === "in_progress" && isGeneratingContent)) && (
             <Button
               onClick={handleStartContentGeneration}
-              disabled={isGeneratingContent}
+              disabled={isGeneratingContent || project.status === "in_progress"}
               className={`${
-                isGeneratingContent
-                  ? "bg-gray-400 cursor-not-allowed"
+                (isGeneratingContent || project.status === "in_progress")
+                  ? "bg-blue-600 cursor-not-allowed"
                   : "bg-green-600 hover:bg-green-700"
               } text-white`}
               size="sm"
-              title={isGeneratingContent ? "Content generation already in progress..." : "Start generating blog content"}
+              title={
+                (isGeneratingContent || project.status === "in_progress") 
+                  ? "Content generation in progress..." 
+                  : "Start generating blog content"
+              }
             >
-              {isGeneratingContent ? (
+              {(isGeneratingContent || project.status === "in_progress") ? (
                 <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                  Starting Generation...
+                  <Clock className="h-4 w-4 mr-2 animate-spin" />
+                  {isGeneratingContent ? "Starting Generation..." : "Generating Content..."}
                 </>
               ) : (
                 <>
                   <FileText className="h-4 w-4 mr-2" />
-                                     Start Content Generation
+                  Start Content Generation
                 </>
               )}
             </Button>
           )}
-          
-                     {/* Debug info for button visibility */}
-           {(() => {
-             console.log("🔍 Button visibility check - project status:", project.status, "should show:", (project.status === "pending" || project.status === "in_progress" || project.status === "ready"))
-             return null
-           })()}
-
-           {/* Show status when generating */}
-           {project.status === "in_progress" && (
-             <Button
-               disabled
-               className="bg-blue-600 text-white cursor-not-allowed"
-               size="sm"
-             >
-               <Clock className="h-4 w-4 mr-2 animate-spin" />
-               Generating Content...
-             </Button>
-           )}
 
            {failedBlogs > 0 && (
              <Button
@@ -913,7 +1064,9 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
                   <CardDescription>
                     {project.serp_api_contents && project.serp_api_contents.total_results
                       ? `${project.serp_api_contents.total_results} sources researched with SEO keywords extracted`
-                      : "Research will be performed when you start content generation"
+                      : (project.status === 'in_progress' || researchStarted)
+                        ? "Research is currently in progress..."
+                        : "Research will be performed when you start content generation"
                     }
                   </CardDescription>
                 </div>
@@ -927,12 +1080,23 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
               {!project.serp_api_contents ? (
                 <div className="text-center py-8">
                   <div className="w-16 h-16 mx-auto mb-4 bg-blue-100 rounded-full flex items-center justify-center">
-                    <Search className="h-8 w-8 text-blue-600" />
+                    <Search className={`h-8 w-8 text-blue-600 ${(project.status === 'in_progress' || researchStarted) ? 'animate-pulse' : ''}`} />
                   </div>
-                  <h4 className="text-lg font-medium text-gray-900 mb-2">Research Not Started Yet</h4>
+                  <h4 className="text-lg font-medium text-gray-900 mb-2">
+                    {(project.status === 'in_progress' || researchStarted) ? 'Research Started' : 'Research Not Started Yet'}
+                  </h4>
                   <p className="text-gray-600 mb-4">
-                    Research will be automatically performed when you start content generation.
+                    {(project.status === 'in_progress' || researchStarted)
+                      ? 'Research is currently in progress. Results will appear here once completed.'
+                      : 'Research will be automatically performed when you start content generation.'
+                    }
                   </p>
+                  {(project.status === 'in_progress' || researchStarted) && (
+                    <div className="flex items-center justify-center gap-2 text-sm text-blue-600">
+                      <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                      <span>Researching sources and extracting data...</span>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <>
@@ -950,28 +1114,12 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
                         )}
                       </h4>
                       <div className="flex gap-2">
-                        {project.extracted_seo_keywords && project.extracted_seo_keywords.length > 0 && (
-                          <Button
-                            onClick={async () => {
-                              try {
-                                console.log('🔄 Refreshing project data...');
-                                onUpdate();
-                              } catch (error) {
-                                console.error('❌ Failed to refresh project data:', error);
-                              }
-                            }}
-                            size="sm"
-                            variant="outline"
-                            className="text-xs"
-                          >
-                            <RotateCcw className="h-3 w-3 mr-1" />
-                            Refresh
-                          </Button>
-                        )}
+
                         {project.serp_api_contents && !project.extracted_seo_keywords && (
                           <Button
                             onClick={async () => {
                               try {
+                                setIsExtractingKeywords(true);
                                 console.log('🔍 Attempting to extract SEO keywords for project:', project.id);
                                 
                                 const response = await fetch(`http://localhost:8000/api/projects/${project.id}/extract-seo-keywords`, {
@@ -987,22 +1135,82 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
                                 if (response.ok) {
                                   const result = await response.json();
                                   console.log('✅ SEO keywords extracted successfully:', result);
-                                  // Refresh project data
-                                  onUpdate();
+                                  
+                                  // Single refresh to show the extracted keywords
+                                  console.log('🔄 Refreshing project data to show extracted keywords...');
+                                  await refreshProjectData();
+                                  
+                                  // Additional check to see if keywords are now available
+                                  console.log('🔍 After refresh - project.extracted_seo_keywords:', project?.extracted_seo_keywords);
+                                  
+                                  // Force an additional refresh after a short delay to ensure keywords are visible
+                                  setTimeout(async () => {
+                                    console.log('🔄 Additional refresh to ensure keywords are visible...');
+                                    await refreshProjectData();
+                                    console.log('🔍 After additional refresh - project.extracted_seo_keywords:', project?.extracted_seo_keywords);
+                                  }, 1000);
+                                  
+                                  // Also try a direct fetch to get the latest project data
+                                  setTimeout(async () => {
+                                    try {
+                                      console.log('🔄 Direct fetch to get latest project data...');
+                                      const directResponse = await fetch(`http://localhost:8000/api/projects/${project.id}`);
+                                      if (directResponse.ok) {
+                                        const directProject = await directResponse.json();
+                                        console.log('🔍 Direct fetch - extracted_seo_keywords:', directProject.extracted_seo_keywords);
+                                        if (directProject.extracted_seo_keywords && directProject.extracted_seo_keywords.length > 0) {
+                                          console.log('🔄 Updating project state with direct fetch data...');
+                                          setProject(prev => prev ? ({
+                                            ...prev,
+                                            extracted_seo_keywords: directProject.extracted_seo_keywords
+                                          }) : null);
+                                        }
+                                      }
+                                    } catch (error) {
+                                      console.error('❌ Error in direct fetch:', error);
+                                    }
+                                  }, 2000);
+                                  
+                                  toast({
+                                    title: "Keywords Extracted",
+                                    description: "SEO keywords have been successfully extracted from research data.",
+                                  });
                                 } else {
                                   const errorText = await response.text();
                                   console.error('❌ Failed to extract SEO keywords:', response.status, response.statusText);
                                   console.error('❌ Error details:', errorText);
+                                  // No auto-refresh cleanup needed since we don't use auto-refresh for keyword extraction
+                                  toast({
+                                    title: "Keyword Extraction Failed",
+                                    description: `Failed to extract keywords: ${response.statusText}`,
+                                    variant: "destructive",
+                                  });
                                 }
                               } catch (error) {
                                 console.error('❌ Exception during SEO keywords extraction:', error);
+                                // No auto-refresh cleanup needed since we don't use auto-refresh for keyword extraction
+                                toast({
+                                  title: "Keyword Extraction Failed",
+                                  description: "An error occurred while extracting keywords. Please try again.",
+                                  variant: "destructive",
+                                });
+                              } finally {
+                                setIsExtractingKeywords(false);
                               }
                             }}
                             size="sm"
                             variant="outline"
+                            disabled={isExtractingKeywords}
                             className="text-xs"
                           >
-                            Extract Keywords
+                            {isExtractingKeywords ? (
+                              <>
+                                <RotateCcw className="h-3 w-3 mr-1 animate-spin" />
+                                Extracting...
+                              </>
+                            ) : (
+                              "Extract Keywords"
+                            )}
                           </Button>
                         )}
                       </div>
@@ -1053,22 +1261,7 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
                 </CardDescription>
               </div>
               
-              {/* Manual Auto-Refresh Toggle */}
-              {project.status === "in_progress" && (
-                <Button
-                  onClick={() => {
-                    setShouldAutoRefresh(!shouldAutoRefresh)
-                    console.log(`🔄 Manual auto-refresh ${shouldAutoRefresh ? 'stopped' : 'started'}`)
-                  }}
-                  variant={shouldAutoRefresh ? "destructive" : "outline"}
-                  size="sm"
-                  className={shouldAutoRefresh ? "bg-red-600 text-white hover:bg-red-700" : "border-blue-300 text-blue-600 hover:bg-blue-50"}
-                  title={shouldAutoRefresh ? "Stop auto-refresh" : "Start auto-refresh"}
-                >
-                  <Clock className="h-4 w-4 mr-2" />
-                  {shouldAutoRefresh ? "Stop Auto-Refresh" : "Start Auto-Refresh"}
-                </Button>
-              )}
+
            </div>
          </CardHeader>
         <CardContent>
@@ -1186,7 +1379,10 @@ The question is not whether to adopt ${projectName}, but how quickly you can imp
               Content Generation in Progress
             </CardTitle>
             <CardDescription className="text-blue-700">
-              Your blogs are being generated. Here's how to monitor progress:
+              {generationStarted 
+                ? "✅ Content generation started successfully! Blogs will appear below as they're generated."
+                : "Your blogs are being generated. Here's how to monitor progress:"
+              }
             </CardDescription>
           </CardHeader>
           <CardContent>

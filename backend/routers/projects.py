@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import List, Optional
 from uuid import UUID
 import logging
+import json
 from datetime import datetime
 
 from models.project import (
@@ -19,6 +20,18 @@ from services.seo_keywords_service import SEOKeywordsService
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+def parse_serp_api_contents(project: dict) -> dict:
+    """
+    Parse serp_api_contents from JSON string to dictionary if needed
+    """
+    if project.get('serp_api_contents') and isinstance(project['serp_api_contents'], str):
+        try:
+            project['serp_api_contents'] = json.loads(project['serp_api_contents'])
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.warning(f"Failed to parse serp_api_contents as JSON for project {project.get('id', 'unknown')}: {e}")
+            project['serp_api_contents'] = None
+    return project
 
 @router.post("/create", response_model=ProjectResponse, summary="Create a new project")
 async def create_project(
@@ -100,7 +113,8 @@ async def get_projects(
         offset = (page - 1) * per_page
         response = query.range(offset, offset + per_page - 1).order("created_at", desc=True).execute()
         
-        projects = [ProjectResponse(**project) for project in response.data]
+        # Parse serp_api_contents for each project if it's a JSON string
+        projects = [ProjectResponse(**parse_serp_api_contents(project)) for project in response.data]
         
         return ProjectListResponse(
             projects=projects,
@@ -132,6 +146,7 @@ async def get_project(
             raise HTTPException(status_code=404, detail="Project not found")
         
         project = response.data[0]
+        project = parse_serp_api_contents(project)
         return ProjectResponse(**project)
         
     except HTTPException:
@@ -171,6 +186,7 @@ async def update_project(
         updated_project = response.data[0]
         logger.info(f"Project updated successfully: {project_id}")
         
+        updated_project = parse_serp_api_contents(updated_project)
         return ProjectResponse(**updated_project)
         
     except HTTPException:
